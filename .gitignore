@@ -62,9 +62,5 @@ target/
 # Notebook Checkpoints
 .ipynb_checkpoints/
 
-data
-checkpoint
-data/*
-checkpoint/*
 ngrok
 ngrok-stable-linux-amd64.zip
