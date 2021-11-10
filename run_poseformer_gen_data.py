@@ -287,7 +287,7 @@ if not args.evaluate:
 
         lr = checkpoint['lr']
     
-    best_pdj = 0
+    best_score = 0
     epoch = 0
 
     ## RESUME
@@ -367,8 +367,8 @@ if not args.evaluate:
             model_pos_refinement.eval()
             
             if not args.no_eval:
-                eval_pdj = []
-                ori_pdj = []
+                eval_score = 0
+                ori_score = 0
                 batch_idx = 0
                 N = 0
                 # Evaluate on test set
@@ -437,26 +437,29 @@ if not args.evaluate:
                     predicted_2d_pos = torch.mean(torch.cat((predicted_2d_pos, predicted_2d_pos_flip), dim=1), dim=1,
                                                   keepdim=True)
                                                   
-                    pdj = compute_pdj(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
-                    o_pdj = compute_pdj(inputs_2d[:, frame_idx], gt_2d[:, frame_idx: frame_idx+1])
-                    eval_pdj += [pdj * predicted_2d_pos.shape[0]]
-                    ori_pdj += [o_pdj * predicted_2d_pos.shape[0]]
+                    # pdj = compute_pdj(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
+                    # o_pdj = compute_pdj(inputs_2d[:, frame_idx], gt_2d[:, frame_idx: frame_idx+1])
+
+                    error = mpjpe(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
+                    o_error = mpjpe(inputs_2d[:, frame_idx: frame_idx+1], gt_2d[:, frame_idx: frame_idx+1])
+                    eval_score += error * predicted_2d_pos.shape[0]
+                    ori_score += o_error * predicted_2d_pos.shape[0]
                     N += predicted_2d_pos.shape[0] 
                     if batch_idx % 100 == 0:
-                        print("Eval epoch {}/{} - batch {} - pdj {:.4f} - ori pdj {:.4f} - avg. pdj {:.4f} - avg. ori pdj {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, sum(eval_pdj)/ N, sum(ori_pdj)/ N))
+                        print("Eval epoch {}/{} - batch {} - mpjpe {:.4f} - ori mpjpe {:.4f} - avg. mpjpe {:.4f} - avg. ori mpjpe {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, error, o_error, eval_score/ N, ori_score/ N))
                     batch_idx += 1
                 
-                mean_pdj = sum(eval_pdj)/ N
-                mean_ori_pdj = sum(ori_pdj)/ N
-                print("Eval epoch {}/{} - Mean PDJ: {:.4f} - Improvement: {:.4f}".format(epoch + 1, args.epochs, mean_pdj, mean_pdj - mean_ori_pdj))
+                mean_score = eval_score/ N
+                mean_ori_score = ori_score/ N
+                print("Eval epoch {}/{} - Mean MPJE: {:.4f} - Improvement: {:.4f}".format(epoch + 1, args.epochs, mean_score, mean_ori_score - mean_score))
                 
-                if mean_pdj > best_pdj:
-                    best_pdj = mean_pdj
-                    best_chk_path = "checkpoint/refinement_conv_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_pdj, mean_pdj - mean_ori_pdj)
+                if mean_score < best_score:
+                    best_score = mean_score
+                    best_chk_path = "checkpoint/refinement_fc_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_score, mean_ori_score - mean_score)
                     torch.save({
                         'epoch': epoch,
                         'lr': lr,
-                        'best': best_pdj,
+                        'best': best_score,
                         'random_state': train_generator.random_state(),
                         'optimizer': optimizer.state_dict(),
                         'model': model_pos_refinement.state_dict(),
