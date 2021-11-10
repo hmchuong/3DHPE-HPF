@@ -286,16 +286,28 @@ if not args.evaluate:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
 
         lr = checkpoint['lr']
-    checkpoint = torch.load("checkpoint/refinement_epoch-3_loss-0.0301.pkl", map_location=lambda storage, loc: storage)
-    model_pos_refinement.load_state_dict(checkpoint["model"], strict=False)
+
+    ## RESUME
+    chkpt_path = "checkpoint/refinement_epoch-3_loss-0.0301.pkl"
+    checkpoint = torch.load(chkpt_path, map_location=lambda storage, loc: storage)
+    if "model" in checkpoint:
+        model_pos_refinement.load_state_dict(checkpoint["model"], strict=False)
+    if "random_state" in checkpoint:
+        train_generator.set_random_state(checkpoint['random_state'])
+    if "lr" in checkpoint:
+        lr = checkpoint['lr']
+    if "optimizer" in checkpoint:
+        optimizer.load_state_dict(checkpoint['optimizer'])
+    if "epoch" in checkpoint:
+        epoch = checkpoint['epoch']
+    if "best" in checkpoint:
+        best_pdj = checkpoint['best']
 
     print('** Note: reported losses are averaged over all frames.')
     print('** The final evaluation will be carried out after the last training epoch.')
 
     mse_loss = nn.MSELoss()
 
-    epoch = 0
-    best_pdj = 0
     # Pos model only
     while epoch < args.epochs:
     
@@ -438,6 +450,10 @@ if not args.evaluate:
                     best_chk_path = "checkpoint/refinement_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_pdj, mean_pdj - mean_ori_pdj)
                     torch.save({
                         'epoch': epoch,
+                        'lr': lr,
+                        'best': best_pdj,
+                        'random_state': train_generator.random_state(),
+                        'optimizer': optimizer.state_dict(),
                         'model': model_pos_refinement.state_dict(),
                     }, best_chk_path)
                     print("Save model to", best_chk_path)
