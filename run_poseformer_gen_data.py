@@ -291,20 +291,21 @@ if not args.evaluate:
     epoch = 0
 
     ## RESUME
-    chkpt_path = "checkpoint/refinement_epoch-3_loss-0.0301.pkl"
-    checkpoint = torch.load(chkpt_path, map_location=lambda storage, loc: storage)
-    if "model" in checkpoint:
-        model_pos_refinement.load_state_dict(checkpoint["model"], strict=False)
-    if "random_state" in checkpoint:
-        train_generator.set_random_state(checkpoint['random_state'])
-    if "lr" in checkpoint:
-        lr = checkpoint['lr']
-    if "optimizer" in checkpoint:
-        optimizer.load_state_dict(checkpoint['optimizer'])
-    if "epoch" in checkpoint:
-        epoch = checkpoint['epoch']
-    if "best" in checkpoint:
-        best_pdj = checkpoint['best']
+    if False:
+        chkpt_path = "checkpoint/refinement_epoch-3_loss-0.0301.pkl"
+        checkpoint = torch.load(chkpt_path, map_location=lambda storage, loc: storage)
+        if "model" in checkpoint:
+            model_pos_refinement.load_state_dict(checkpoint["model"], strict=False)
+        if "random_state" in checkpoint:
+            train_generator.set_random_state(checkpoint['random_state'])
+        if "lr" in checkpoint:
+            lr = checkpoint['lr']
+        if "optimizer" in checkpoint:
+            optimizer.load_state_dict(checkpoint['optimizer'])
+        if "epoch" in checkpoint:
+            epoch = checkpoint['epoch']
+        if "best" in checkpoint:
+            best_pdj = checkpoint['best']
 
     print('** Note: reported losses are averaged over all frames.')
     print('** The final evaluation will be carried out after the last training epoch.')
@@ -349,14 +350,15 @@ if not args.evaluate:
             pose_2d_gt = pose_2d_gt.permute(0, 2, 1)
             pred = model_pos_refinement(inp_data)
             # loss = mse_loss(pred, pose_2d_gt)
-            loss = mpjpe(pred, pose_2d_gt)
+            loss = mpjpe(pred.permute(0,2,1), pose_2d_gt.permute(0,2,1))
+            ori_loss = mpjpe(pose_2d, pose_2d_gt.permute(0,2,1))
 
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * pose_2d_gt.shape[0]
             N += pose_2d_gt.shape[0]
             if batch_idx % 100 == 0:
-                print("Train epoch {}/{} - batch {} - loss {} - avg. loss {}".format(epoch + 1, args.epochs, batch_idx + 1, loss.item(), train_loss/ N))
+                print("Train epoch {}/{} - batch {} - ori loss {:.4f} - loss {:.4f} - avg. loss {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, ori_loss.item(), loss.item(), train_loss/ N))
             batch_idx += 1
         
         with torch.no_grad():
@@ -441,7 +443,7 @@ if not args.evaluate:
                     ori_pdj += [o_pdj * predicted_2d_pos.shape[0]]
                     N += predicted_2d_pos.shape[0] 
                     if batch_idx % 100 == 0:
-                        print("Eval epoch {}/{} - batch {} - pdj {} - ori pdj {} - avg. pdj {} - avg. ori pdj {}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, sum(eval_pdj)/ N, sum(ori_pdj)/ N))
+                        print("Eval epoch {}/{} - batch {} - pdj {:.4f} - ori pdj {:.4f} - avg. pdj {:.4f} - avg. ori pdj {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, sum(eval_pdj)/ N, sum(ori_pdj)/ N))
                     batch_idx += 1
                 
                 mean_pdj = sum(eval_pdj)/ N
@@ -450,7 +452,7 @@ if not args.evaluate:
                 
                 if mean_pdj > best_pdj:
                     best_pdj = mean_pdj
-                    best_chk_path = "checkpoint/refinement_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_pdj, mean_pdj - mean_ori_pdj)
+                    best_chk_path = "checkpoint/refinement_conv_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_pdj, mean_pdj - mean_ori_pdj)
                     torch.save({
                         'epoch': epoch,
                         'lr': lr,
