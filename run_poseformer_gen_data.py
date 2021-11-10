@@ -31,6 +31,8 @@ from common.generators import ChunkedGenerator, UnchunkedGenerator
 from time import time
 from common.utils import *
 
+from common.model_refinement import PoseRefinement
+
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -84,11 +86,6 @@ kps_left, kps_right = list(keypoints_symmetry[0]), list(keypoints_symmetry[1])
 joints_left, joints_right = list(dataset.skeleton().joints_left()), list(dataset.skeleton().joints_right())
 keypoints = keypoints['positions_2d'].item()
 
-print('Loading 2D detections groundtruth...')
-keypoints_gt = np.load('data/data_2d_' + args.dataset + '_gt.npz', allow_pickle=True)
-keypoints_gt = keypoints_gt['positions_2d'].item()
-import pdb; pdb.set_trace()
-
 ###################
 for subject in dataset.subjects():
     assert subject in keypoints, 'Subject {} is missing from the 2D detections dataset'.format(subject)
@@ -115,6 +112,8 @@ for subject in keypoints.keys():
             # Normalize camera frame
             cam = dataset.cameras()[subject][cam_idx]
             kps[..., :2] = normalize_screen_coordinates(kps[..., :2], w=cam['res_w'], h=cam['res_h'])
+            if kps.shape[-1] > 2:
+                kps[..., 2:] = normalize_screen_coordinates(kps[..., 2:], w=cam['res_w'], h=cam['res_h'])
             keypoints[subject][action][cam_idx] = kps
 
 subjects_train = args.subjects_train.split(',')
@@ -186,7 +185,6 @@ if action_filter is not None:
 
 cameras_valid, poses_valid, poses_valid_2d = fetch(subjects_test, action_filter)
 
-
 receptive_field = args.number_of_frames
 print('INFO: Receptive field: {} frames'.format(receptive_field))
 pad = (receptive_field -1) // 2 # Padding on each side
@@ -202,6 +200,8 @@ model_pos_train = PoseTransformer(num_frame=receptive_field, num_joints=num_join
 
 model_pos = PoseTransformer(num_frame=receptive_field, num_joints=num_joints, in_chans=2, embed_dim_ratio=32, depth=4,
         num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,drop_path_rate=0)
+    
+model_pos_refinement = PoseRefinement(fc_dim_in=5, num_fc=2, fc_dim=64, num_out=2)
 
 ################ load weight ########################
 # posetrans_checkpoint = torch.load('./checkpoint/pretrained_posetrans.bin', map_location=lambda storage, loc: storage)
@@ -211,7 +211,7 @@ model_pos = PoseTransformer(num_frame=receptive_field, num_joints=num_joints, in
 #################
 causal_shift = 0
 model_params = 0
-for parameter in model_pos.parameters():
+for parameter in model_pos_refinement.parameters():
     model_params += parameter.numel()
 print('INFO: Trainable parameter count:', model_params)
 
@@ -220,6 +220,8 @@ if torch.cuda.is_available():
     model_pos = model_pos.cuda()
     model_pos_train = nn.DataParallel(model_pos_train)
     model_pos_train = model_pos_train.cuda()
+    model_pos_refinement = nn.DataParallel(model_pos_refinement)
+    model_pos_refinement = model_pos_refinement.cuda()
 
 
 if args.resume or args.evaluate:
@@ -250,9 +252,9 @@ def eval_data_prepare(receptive_field, inputs_2d, inputs_3d):
 if not args.evaluate:
     cameras_train, poses_train, poses_train_2d = fetch(subjects_train, action_filter, subset=args.subset)
 
-    _, _, poses_train_2d_gt = fetch(subjects_train, action_filter, subset=args.subset)
     lr = args.learning_rate
-    optimizer = optim.AdamW(model_pos_train.parameters(), lr=lr, weight_decay=0.1)
+    # optimizer = optim.AdamW(model_pos_train.parameters(), lr=lr, weight_decay=0.1)
+    optimizer = optim.AdamW(model_pos_refinement.parameters(), lr=lr, weight_decay=0.1)
 
     lr_decay = args.lr_decay
     losses_3d_train = []
@@ -274,7 +276,7 @@ if not args.evaluate:
     if args.resume:
         epoch = checkpoint['epoch']
         if 'optimizer' in checkpoint and checkpoint['optimizer'] is not None:
-            optimizer.load_state_dict(checkpoint['optimizer'])
+            # optimizer.load_state_dict(checkpoint['optimizer'])
             train_generator.set_random_state(checkpoint['random_state'])
         else:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
@@ -285,16 +287,19 @@ if not args.evaluate:
     print('** Note: reported losses are averaged over all frames.')
     print('** The final evaluation will be carried out after the last training epoch.')
 
+    mse_loss = nn.MSELoss()
+
+    epoch = 0
+    best_loss = 99999
     # Pos model only
     while epoch < args.epochs:
-        start_time = time()
-        epoch_loss_3d_train = 0
-        epoch_loss_traj_train = 0
-        epoch_loss_2d_train_unlabeled = 0
+    
         N = 0
         N_semi = 0
-        model_pos_train.train()
-
+        # model_pos_train.train()
+        model_pos_refinement.train()
+        train_loss = []
+        batch_idx = 0
         for cameras_train, batch_3d, batch_2d in train_generator.next_epoch():
             cameras_train = torch.from_numpy(cameras_train.astype('float32'))
             inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
@@ -311,12 +316,119 @@ if not args.evaluate:
 
             # Predict 3D poses
             with torch.no_grad():
-                predicted_3d_pos = model_pos_train(inputs_2d)
+                predicted_3d_pos = model_pos_train(inputs_2d[:, :, :, 2:])
                 # Save predicted_3d_pos + inputs_2d[40] => 512, 1, 17, 5 => 512, 17 * 5
                 frame_idx = inputs_2d.shape[1] // 2
-                pose_2d = inputs_2d[:, frame_idx] # 512, 17, 2
+                pose_2d_gt = inputs_2d[:, frame_idx, ..., :2] # 512, 17, 2
+                pose_2d = inputs_2d[:, frame_idx, ..., 2:] # 512, 17, 2
                 pose_3d = predicted_3d_pos[:, 0] # 512, 17, 3
-                # TODO: Get ground-truth
+                # file_format = "data_refinement/epoch_{}_batch_{}.npz".format(epoch, batch_idx)
+                # np.savez(file_format, pose_2d=pose_2d.cpu().numpy(), pose_2d_gt=pose_2d_gt.cpu().numpy(), pose_3d=pose_3d.cpu().numpy())
+            
+            inp_data = torch.cat([pose_2d, pose_3d], dim=2).permute(0, 2, 1)
+            pose_2d_gt = pose_2d_gt.permute(0, 2, 1)
+            pred = model_pos_refinement(inp_data)
+            loss = mse_loss(pred, pose_2d_gt)
+            loss.backward()
+            optimizer.step()
+            train_loss += [loss.item()]
+            if batch_idx % 100 == 0:
+                print("Train epoch {}/{} - batch {} - loss {} - avg. loss {}".format(epoch + 1, args.epochs, batch_idx + 1, loss.item(), sum(train_loss)/ len(train_loss)))
+            batch_idx += 1
+        
+        with torch.no_grad():
+            model_pos.load_state_dict(model_pos_train.state_dict(), strict=False)
+            model_pos.eval()
+            model_pos_refinement.eval()
+            
+            if not args.no_eval:
+                eval_loss = []
+                batch_idx = 0
+                # Evaluate on test set
+                for cam, batch, batch_2d in test_generator.next_epoch():
+                    inputs_3d = torch.from_numpy(batch.astype('float32'))
+                    inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
+                    gt_2d = inputs_2d[..., :2]
+                    inputs_2d = inputs_2d[..., 2:]
+
+                    ##### apply test-time-augmentation (following Videopose3d)
+                    
+                    # prediction point
+                    inputs_2d_flip = inputs_2d.clone()
+                    inputs_2d_flip[:, :, :, 0] *= -1
+                    inputs_2d_flip[:, :, kps_left + kps_right, :] = inputs_2d_flip[:, :, kps_right + kps_left, :]
+
+                    # gt point
+                    gt_2d_flip = gt_2d.clone()
+                    gt_2d_flip[:, :, :, 0] *= -1
+                    gt_2d_flip[:, :, kps_left + kps_right, :] = gt_2d_flip[:, :, kps_right + kps_left, :]
+
+                    ##### convert size
+                    inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d)
+                    inputs_2d_flip, _ = eval_data_prepare(receptive_field, inputs_2d_flip, inputs_3d)
+
+                    gt_2d, _ = eval_data_prepare(receptive_field, gt_2d, inputs_3d)
+                    gt_2d_flip, _ = eval_data_prepare(receptive_field, gt_2d_flip, inputs_3d)
+
+                    if torch.cuda.is_available():
+                        inputs_2d = inputs_2d.cuda()
+                        gt_2d = gt_2d.cuda()
+                        inputs_2d_flip = inputs_2d_flip.cuda()
+                        gt_2d_flip = gt_2d_flip.cuda()
+                        inputs_3d = inputs_3d.cuda()
+                    inputs_3d[:, :, 0] = 0
+                    
+                    predicted_3d_pos = model_pos(inputs_2d)
+                    predicted_3d_pos_flip = model_pos(inputs_2d_flip)
+                    
+                    frame_idx = inputs_2d.shape[1] // 2
+                    pose_2d = inputs_2d[:, frame_idx]
+                    pose_3d = predicted_3d_pos[:, 0]
+                    inp_data = torch.cat([pose_2d, pose_3d], dim=2).permute(0, 2, 1)
+
+                    predicted_2d_pos = model_pos_refinement(inp_data)
+                    predicted_2d_pos = predicted_2d_pos.permute(0, 2, 1).unsqueeze(1)
+
+                    pose_2d = inputs_2d_flip[:, frame_idx]
+                    pose_3d = predicted_3d_pos_flip[:, 0]
+                    inp_data = torch.cat([pose_2d, pose_3d], dim=2).permute(0, 2, 1)
+
+                    predicted_2d_pos_flip = model_pos_refinement(inp_data)
+                    predicted_2d_pos_flip = predicted_2d_pos_flip.permute(0, 2, 1).unsqueeze(1)
+
+                    predicted_3d_pos_flip[:, :, :, 0] *= -1
+                    predicted_3d_pos_flip[:, :, joints_left + joints_right] = predicted_3d_pos_flip[:, :,
+                                                                              joints_right + joints_left]
+
+                    predicted_2d_pos_flip[:, :, :, 0] *= -1
+                    predicted_2d_pos_flip[:, :, joints_left + joints_right] = predicted_2d_pos_flip[:, :,
+                                                                              joints_right + joints_left]
+
+                    predicted_3d_pos = torch.mean(torch.cat((predicted_3d_pos, predicted_3d_pos_flip), dim=1), dim=1,
+                                                  keepdim=True)
+                    
+                    predicted_2d_pos = torch.mean(torch.cat((predicted_2d_pos, predicted_2d_pos_flip), dim=1), dim=1,
+                                                  keepdim=True)
+                                                  
+                    loss = mse_loss(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
+                    eval_loss += [loss.item()]
+                    
+                    if batch_idx % 100 == 0:
+                        print("Eval epoch {}/{} - batch {} - loss {} - avg. loss {}".format(epoch + 1, args.epochs, batch_idx + 1, loss.item(), sum(eval_loss)/ len(eval_loss)))
+                    batch_idx += 1
+
+                mean_loss = sum(eval_loss)/ len(eval_loss)
+                if mean_loss < best_loss:
+                    best_loss = mean_loss
+                    best_chk_path = "checkpoint/refinement_epoch-{}_loss-{:.4f}.pkl".format(epoch, mean_loss)
+                    torch.save({
+                        'epoch': epoch,
+                        'model': model_pos_refinement.state_dict(),
+                    }, best_chk_path)
+                    print("Save model to", best_chk_path)
+        epoch += 1
+
+        
 
 
 # Evaluate

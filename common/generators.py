@@ -44,7 +44,7 @@ class ChunkedGenerator:
                  chunk_length, pad=0, causal_shift=0,
                  shuffle=True, random_seed=1234,
                  augment=False, kps_left=None, kps_right=None, joints_left=None, joints_right=None,
-                 endless=False, poses_2d_gt=None):
+                 endless=False):
         assert poses_3d is None or len(poses_3d) == len(poses_2d), (len(poses_3d), len(poses_2d))
         assert cameras is None or len(cameras) == len(poses_2d)
     
@@ -65,9 +65,7 @@ class ChunkedGenerator:
             self.batch_cam = np.empty((batch_size, cameras[0].shape[-1]))
         if poses_3d is not None:
             self.batch_3d = np.empty((batch_size, chunk_length, poses_3d[0].shape[-2], poses_3d[0].shape[-1]))
-        
         self.batch_2d = np.empty((batch_size, chunk_length + 2*pad, poses_2d[0].shape[-2], poses_2d[0].shape[-1]))
-        self.batch_2d_gt = np.empty((batch_size, chunk_length + 2*pad, poses_2d[0].shape[-2], poses_2d[0].shape[-1]))
 
         self.num_batches = (len(pairs) + batch_size - 1) // batch_size
         self.batch_size = batch_size
@@ -82,7 +80,6 @@ class ChunkedGenerator:
         self.cameras = cameras
         self.poses_3d = poses_3d
         self.poses_2d = poses_2d
-        self.poses_2d_gt = poses_2d_gt
         
         self.augment = augment
         self.kps_left = kps_left
@@ -124,31 +121,19 @@ class ChunkedGenerator:
 
                     # 2D poses
                     seq_2d = self.poses_2d[seq_i]
-                    
-                    seq_2d_gt = None
-                    if self.poses_2d_gt is not None:
-                        seq_2d_gt = self.poses_2d_gt[seq_i]
-                    
                     low_2d = max(start_2d, 0)
                     high_2d = min(end_2d, seq_2d.shape[0])
                     pad_left_2d = low_2d - start_2d
                     pad_right_2d = end_2d - high_2d
                     if pad_left_2d != 0 or pad_right_2d != 0:
                         self.batch_2d[i] = np.pad(seq_2d[low_2d:high_2d], ((pad_left_2d, pad_right_2d), (0, 0), (0, 0)), 'edge')
-                        if seq_2d_gt is not None:
-                            self.batch_2d_gt[i] = np.pad(seq_2d_gt[low_2d:high_2d], ((pad_left_2d, pad_right_2d), (0, 0), (0, 0)), 'edge')
                     else:
                         self.batch_2d[i] = seq_2d[low_2d:high_2d]
-                        if seq_2d_gt is not None:
-                            self.batch_2d_gt[i] = seq_2d_gt[low_2d:high_2d]
 
                     if flip:
                         # Flip 2D keypoints
                         self.batch_2d[i, :, :, 0] *= -1
                         self.batch_2d[i, :, self.kps_left + self.kps_right] = self.batch_2d[i, :, self.kps_right + self.kps_left]
-
-                        self.batch_2d_gt[i, :, :, 0] *= -1
-                        self.batch_2d_gt[i, :, self.kps_left + self.kps_right] = self.batch_2d_gt[i, :, self.kps_right + self.kps_left]
 
                     # 3D poses
                     if self.poses_3d is not None:
@@ -185,10 +170,7 @@ class ChunkedGenerator:
                 elif self.poses_3d is None:
                     yield self.batch_cam[:len(chunks)], None, self.batch_2d[:len(chunks)]
                 else:
-                    if self.poses_2d_gt is None:
-                        yield self.batch_cam[:len(chunks)], self.batch_3d[:len(chunks)], self.batch_2d[:len(chunks)]
-                    else:
-                        yield self.batch_cam[:len(chunks)], self.batch_3d[:len(chunks)], self.batch_2d[:len(chunks)], self.batch_2d_gt[:len(chunks)]
+                    yield self.batch_cam[:len(chunks)], self.batch_3d[:len(chunks)], self.batch_2d[:len(chunks)]
             
             if self.endless:
                 self.state = None

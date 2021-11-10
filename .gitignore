@@ -64,3 +64,4 @@ target/
 
 ngrok
 ngrok-stable-linux-amd64.zip
+data_refinement/*
