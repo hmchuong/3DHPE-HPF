@@ -32,6 +32,7 @@ from time import time
 from common.utils import *
 
 from common.model_refinement import PoseRefinement
+from common.metrics import compute_pdj
 
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -232,6 +233,9 @@ if args.resume or args.evaluate:
     model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
 
 
+
+
+
 test_generator = UnchunkedGenerator(cameras_valid, poses_valid, poses_valid_2d,
                                     pad=pad, causal_shift=causal_shift, augment=False,
                                     kps_left=kps_left, kps_right=kps_right, joints_left=joints_left, joints_right=joints_right)
@@ -282,7 +286,8 @@ if not args.evaluate:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
 
         lr = checkpoint['lr']
-
+    checkpoint = torch.load("checkpoint/refinement_epoch-3_loss-0.0301.pkl", map_location=lambda storage, loc: storage)
+    model_pos_refinement.load_state_dict(checkpoint["model"], strict=False)
 
     print('** Note: reported losses are averaged over all frames.')
     print('** The final evaluation will be carried out after the last training epoch.')
@@ -290,7 +295,7 @@ if not args.evaluate:
     mse_loss = nn.MSELoss()
 
     epoch = 0
-    best_loss = 99999
+    best_pdj = 0
     # Pos model only
     while epoch < args.epochs:
     
@@ -298,7 +303,7 @@ if not args.evaluate:
         N_semi = 0
         # model_pos_train.train()
         model_pos_refinement.train()
-        train_loss = []
+        train_loss = 0
         batch_idx = 0
         for cameras_train, batch_3d, batch_2d in train_generator.next_epoch():
             cameras_train = torch.from_numpy(cameras_train.astype('float32'))
@@ -328,12 +333,15 @@ if not args.evaluate:
             inp_data = torch.cat([pose_2d, pose_3d], dim=2).permute(0, 2, 1)
             pose_2d_gt = pose_2d_gt.permute(0, 2, 1)
             pred = model_pos_refinement(inp_data)
-            loss = mse_loss(pred, pose_2d_gt)
+            # loss = mse_loss(pred, pose_2d_gt)
+            loss = mpjpe(pred, pose_2d_gt)
+
             loss.backward()
             optimizer.step()
-            train_loss += [loss.item()]
+            train_loss += loss.item() * pose_2d_gt.shape[0]
+            N += pose_2d_gt.shape[0]
             if batch_idx % 100 == 0:
-                print("Train epoch {}/{} - batch {} - loss {} - avg. loss {}".format(epoch + 1, args.epochs, batch_idx + 1, loss.item(), sum(train_loss)/ len(train_loss)))
+                print("Train epoch {}/{} - batch {} - loss {} - avg. loss {}".format(epoch + 1, args.epochs, batch_idx + 1, loss.item(), train_loss/ N))
             batch_idx += 1
         
         with torch.no_grad():
@@ -342,8 +350,10 @@ if not args.evaluate:
             model_pos_refinement.eval()
             
             if not args.no_eval:
-                eval_loss = []
+                eval_pdj = []
+                ori_pdj = []
                 batch_idx = 0
+                N = 0
                 # Evaluate on test set
                 for cam, batch, batch_2d in test_generator.next_epoch():
                     inputs_3d = torch.from_numpy(batch.astype('float32'))
@@ -410,22 +420,32 @@ if not args.evaluate:
                     predicted_2d_pos = torch.mean(torch.cat((predicted_2d_pos, predicted_2d_pos_flip), dim=1), dim=1,
                                                   keepdim=True)
                                                   
-                    loss = mse_loss(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
-                    eval_loss += [loss.item()]
-                    
+                    pdj = compute_pdj(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
+                    o_pdj = compute_pdj(inputs_2d[:, frame_idx], gt_2d[:, frame_idx: frame_idx+1])
+                    eval_pdj += [pdj * predicted_2d_pos.shape[0]]
+                    ori_pdj += [o_pdj * predicted_2d_pos.shape[0]]
+                    N += predicted_2d_pos.shape[0] 
                     if batch_idx % 100 == 0:
-                        print("Eval epoch {}/{} - batch {} - loss {} - avg. loss {}".format(epoch + 1, args.epochs, batch_idx + 1, loss.item(), sum(eval_loss)/ len(eval_loss)))
+                        print("Eval epoch {}/{} - batch {} - pdj {} - ori pdj {} - avg. pdj {} - avg. ori pdj {}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, sum(eval_pdj)/ N, sum(ori_pdj)/ N))
                     batch_idx += 1
-
-                mean_loss = sum(eval_loss)/ len(eval_loss)
-                if mean_loss < best_loss:
-                    best_loss = mean_loss
-                    best_chk_path = "checkpoint/refinement_epoch-{}_loss-{:.4f}.pkl".format(epoch, mean_loss)
+                
+                mean_pdj = sum(eval_pdj)/ N
+                mean_ori_pdj = sum(ori_pdj)/ N
+                print("Eval epoch {}/{} - Mean PDJ: {:.4f} - Improvement: {:.4f}".format(epoch + 1, args.epochs, mean_pdj, mean_pdj - mean_ori_pdj))
+                
+                if mean_pdj > best_pdj:
+                    best_pdj = mean_pdj
+                    best_chk_path = "checkpoint/refinement_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_pdj, mean_pdj - mean_ori_pdj)
                     torch.save({
                         'epoch': epoch,
                         'model': model_pos_refinement.state_dict(),
                     }, best_chk_path)
                     print("Save model to", best_chk_path)
+        
+        # Decay learning rate exponentially
+        lr *= lr_decay
+        for param_group in optimizer.param_groups:
+            param_group['lr'] *= lr_decay
         epoch += 1
 
         
