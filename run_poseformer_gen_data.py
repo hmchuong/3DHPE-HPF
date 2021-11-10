@@ -286,6 +286,9 @@ if not args.evaluate:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
 
         lr = checkpoint['lr']
+    
+    best_pdj = 0
+    epoch = 0
 
     ## RESUME
     chkpt_path = "checkpoint/refinement_epoch-3_loss-0.0301.pkl"
