@@ -131,8 +131,11 @@ class ChunkedGenerator:
                         self.batch_2d[i] = seq_2d[low_2d:high_2d]
 
                     if flip:
+                        # import pdb; pdb.set_trace()
                         # Flip 2D keypoints
                         self.batch_2d[i, :, :, 0] *= -1
+                        if self.batch_2d.shape[-1] > 2:
+                            self.batch_2d[i, :, :, 2] *= -1
                         self.batch_2d[i, :, self.kps_left + self.kps_right] = self.batch_2d[i, :, self.kps_right + self.kps_left]
 
                     # 3D poses

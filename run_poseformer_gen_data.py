@@ -287,7 +287,7 @@ if not args.evaluate:
 
         lr = checkpoint['lr']
     
-    best_score = 0
+    best_score = 999999
     epoch = 0
 
     ## RESUME
@@ -320,6 +320,7 @@ if not args.evaluate:
         # model_pos_train.train()
         model_pos_refinement.train()
         train_loss = 0
+        epoch_ori_loss = 0
         batch_idx = 0
         for cameras_train, batch_3d, batch_2d in train_generator.next_epoch():
             cameras_train = torch.from_numpy(cameras_train.astype('float32'))
@@ -356,9 +357,10 @@ if not args.evaluate:
             loss.backward()
             optimizer.step()
             train_loss += loss.item() * pose_2d_gt.shape[0]
+            epoch_ori_loss += ori_loss.item() * pose_2d_gt.shape[0]
             N += pose_2d_gt.shape[0]
-            if batch_idx % 100 == 0:
-                print("Train epoch {}/{} - batch {} - ori loss {:.4f} - loss {:.4f} - avg. loss {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, ori_loss.item(), loss.item(), train_loss/ N))
+            if batch_idx % 20 == 0:
+                print("Train epoch {}/{} - batch {} - ori loss {:.4f} - loss {:.4f} - ori avg. loss {:.4f} - avg. loss {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, ori_loss.item(), loss.item(), epoch_ori_loss/N, train_loss/ N))
             batch_idx += 1
         
         with torch.no_grad():
@@ -391,7 +393,9 @@ if not args.evaluate:
                     gt_2d_flip[:, :, kps_left + kps_right, :] = gt_2d_flip[:, :, kps_right + kps_left, :]
 
                     ##### convert size
+                    inputs_2d_old = inputs_2d.clone()
                     inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d)
+                    inputs_2d_flip_old = inputs_2d_flip.clone()
                     inputs_2d_flip, _ = eval_data_prepare(receptive_field, inputs_2d_flip, inputs_3d)
 
                     gt_2d, _ = eval_data_prepare(receptive_field, gt_2d, inputs_3d)
@@ -436,7 +440,8 @@ if not args.evaluate:
                     
                     predicted_2d_pos = torch.mean(torch.cat((predicted_2d_pos, predicted_2d_pos_flip), dim=1), dim=1,
                                                   keepdim=True)
-                                                  
+                    
+                    
                     # pdj = compute_pdj(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
                     # o_pdj = compute_pdj(inputs_2d[:, frame_idx], gt_2d[:, frame_idx: frame_idx+1])
 
@@ -444,8 +449,9 @@ if not args.evaluate:
                     o_error = mpjpe(inputs_2d[:, frame_idx: frame_idx+1], gt_2d[:, frame_idx: frame_idx+1])
                     eval_score += error * predicted_2d_pos.shape[0]
                     ori_score += o_error * predicted_2d_pos.shape[0]
-                    N += predicted_2d_pos.shape[0] 
-                    if batch_idx % 100 == 0:
+                    N += predicted_2d_pos.shape[0]
+                    # import pdb; pdb.set_trace()
+                    if batch_idx % 20 == 0:
                         print("Eval epoch {}/{} - batch {} - mpjpe {:.4f} - ori mpjpe {:.4f} - avg. mpjpe {:.4f} - avg. ori mpjpe {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, error, o_error, eval_score/ N, ori_score/ N))
                     batch_idx += 1
                 
