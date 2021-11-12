@@ -250,6 +250,19 @@ def eval_data_prepare(receptive_field, inputs_2d, inputs_3d):
         eval_input_2d[i,:,:,:] = inputs_2d_p[i:i+receptive_field, :, :]
     return eval_input_2d, inputs_3d_p
 
+def populate_2d_refinement(inputs_2d, refinement_2d):
+    n_patch, n_frame, n_joints, n_pt = inputs_2d.shape
+    previous_patch = None
+    eval_input_2d = torch.empty(n_patch, n_frame, n_joints, n_pt).to(inputs_2d.device)
+    for i in range(n_patch):
+        if i == 0:
+            eval_input_2d[i] = inputs_2d[i]
+        else:
+            eval_input_2d[i] = torch.cat([previous_patch[1:], inputs_2d[i, -1:]], dim=0)
+        eval_input_2d[i, n_frame // 2] = refinement_2d[i, 0]
+        previous_patch = eval_input_2d[i]
+    return eval_input_2d
+
 
 ###################
 
@@ -484,6 +497,12 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     epoch_loss_3d_pos_procrustes = 0
     epoch_loss_3d_pos_scale = 0
     epoch_loss_3d_vel = 0
+
+    epoch_loss_3d_pos_ref = 0
+    epoch_loss_3d_pos_procrustes_ref = 0
+    epoch_loss_3d_pos_scale_ref = 0
+    epoch_loss_3d_vel_ref = 0
+
     epoch_pdj = 0
     epoch_pdj_o = 0
     with torch.no_grad():
@@ -588,13 +607,32 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
 
             # Compute MPJPE with new 2D pose
-            # inputs_2d[:, frame_idx] = predicted_2d_pos[:, 0]
-            # predicted_3d_pos = model_pos(inputs_2d)
-            # inputs_2d_flip[:, frame_idx] = 
-            # predicted_3d_pos_flip = model_pos(inputs_2d_flip)
-            # predicted_3d_pos_flip[:, :, :, 0] *= -1
-            # predicted_3d_pos_flip[:, :, joints_left + joints_right] = predicted_3d_pos_flip[:, :,
-            #                                                           joints_right + joints_left]
+            inputs_2d = populate_2d_refinement(inputs_2d, predicted_2d_pos)
+            inputs_2d_flip = inputs_2d.clone()
+            inputs_2d_flip [:, :, :, 0] *= -1
+            inputs_2d_flip[:, :, kps_left + kps_right,:] = inputs_2d_flip[:, :, kps_right + kps_left,:]
+
+            predicted_3d_pos = model_pos(inputs_2d)
+            predicted_3d_pos_flip = model_pos(inputs_2d_flip)
+            predicted_3d_pos_flip[:, :, :, 0] *= -1
+            predicted_3d_pos_flip[:, :, joints_left + joints_right] = predicted_3d_pos_flip[:, :,
+                                                                      joints_right + joints_left]
+
+            predicted_3d_pos = torch.mean(torch.cat((predicted_3d_pos, predicted_3d_pos_flip), dim=1), dim=1,
+                                          keepdim=True)
+
+            error = mpjpe(predicted_3d_pos, inputs_3d)
+            epoch_loss_3d_pos_scale_ref += inputs_3d.shape[0]*inputs_3d.shape[1] * n_mpjpe(predicted_3d_pos, inputs_3d).item()
+
+            epoch_loss_3d_pos_ref += inputs_3d.shape[0]*inputs_3d.shape[1] * error.item()
+
+            inputs = inputs_3d.cpu().numpy().reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1])
+            predicted_3d_pos = predicted_3d_pos.cpu().numpy().reshape(-1, inputs_3d.shape[-2], inputs_3d.shape[-1])
+
+            epoch_loss_3d_pos_procrustes_ref += inputs_3d.shape[0]*inputs_3d.shape[1] * p_mpjpe(predicted_3d_pos, inputs)
+
+            # Compute velocity error
+            epoch_loss_3d_vel_ref += inputs_3d.shape[0]*inputs_3d.shape[1] * mean_velocity_error(predicted_3d_pos, inputs)
 
 
     if action is None:
@@ -605,6 +643,10 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     e2 = (epoch_loss_3d_pos_procrustes / N)*1000
     e3 = (epoch_loss_3d_pos_scale / N)*1000
     ev = (epoch_loss_3d_vel / N)*1000
+    e1_rf = (epoch_loss_3d_pos_ref / N)*1000
+    e2_rf = (epoch_loss_3d_pos_procrustes_ref / N)*1000
+    e3_rf = (epoch_loss_3d_pos_scale_ref / N)*1000
+    ev_rf = (epoch_loss_3d_vel_ref / N)*1000
     pdj_2d = epoch_pdj / N_2D
     pdj_ori_2d = epoch_pdj_o / N_2D
     print('Protocol #1 Error (MPJPE):', e1, 'mm')
@@ -612,10 +654,16 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     print('Protocol #3 Error (N-MPJPE):', e3, 'mm')
     print('Velocity Error (MPJVE):', ev, 'mm')
     print('PDJ original:', pdj_ori_2d)
+    
+    print('---Refinement---')
     print('PDJ refinement:', pdj_2d)
+    print('Protocol #1 Error (MPJPE):', e1_rf, 'mm')
+    print('Protocol #2 Error (P-MPJPE):', e2_rf, 'mm')
+    print('Protocol #3 Error (N-MPJPE):', e3_rf, 'mm')
+    print('Velocity Error (MPJVE):', ev_rf, 'mm')
     print('----------')
 
-    return e1, e2, e3, ev, pdj_ori_2d, pdj_2d
+    return e1, e2, e3, ev, e1_rf, e2_rf, e3_rf, ev_rf, pdj_ori_2d, pdj_2d
 
 if args.render:
     print('Rendering...')
@@ -731,6 +779,10 @@ else:
         errors_p2 = []
         errors_p3 = []
         errors_vel = []
+        errors_p1_rf = []
+        errors_p2_rf = []
+        errors_p3_rf = []
+        errors_vel_rf = []
         pdj_ori = []
         pdj_ref = []
 
@@ -749,11 +801,15 @@ else:
                                      pad=pad, causal_shift=causal_shift, augment=args.test_time_augmentation,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left,
                                      joints_right=joints_right)
-            e1, e2, e3, ev, po, pr = evaluate(gen, action_key)
+            e1, e2, e3, ev, e1_rf, e2_rf, e3_rf, ev_rf, po, pr = evaluate(gen, action_key)
             errors_p1.append(e1)
             errors_p2.append(e2)
             errors_p3.append(e3)
             errors_vel.append(ev)
+            errors_p1_rf.append(e1_rf)
+            errors_p2_rf.append(e2_rf)
+            errors_p3_rf.append(e3_rf)
+            errors_vel_rf.append(ev_rf)
             pdj_ori.append(po)
             pdj_ref.append(pr)
 
@@ -761,8 +817,13 @@ else:
         print('Protocol #2 (P-MPJPE) action-wise average:', round(np.mean(errors_p2), 1), 'mm')
         print('Protocol #3 (N-MPJPE) action-wise average:', round(np.mean(errors_p3), 1), 'mm')
         print('Velocity      (MPJVE) action-wise average:', round(np.mean(errors_vel), 2), 'mm')
-        print('PDJ            origin action-wise average:', round(np.mean(pdj_ori), 2))
-        print('PDJ        refinement action-wise average:', round(np.mean(pdj_ref), 2))
+        print('PDJ            origin action-wise average:', round(np.mean(pdj_ori), 4))
+        print('PDJ        refinement action-wise average:', round(np.mean(pdj_ref), 4))
+        print("---Refinement---")
+        print('Protocol #1   (MPJPE) action-wise average:', round(np.mean(errors_p1_rf), 1), 'mm')
+        print('Protocol #2 (P-MPJPE) action-wise average:', round(np.mean(errors_p2_rf), 1), 'mm')
+        print('Protocol #3 (N-MPJPE) action-wise average:', round(np.mean(errors_p3_rf), 1), 'mm')
+        print('Velocity      (MPJVE) action-wise average:', round(np.mean(errors_vel_rf), 2), 'mm')
 
 
     if not args.by_subject:
