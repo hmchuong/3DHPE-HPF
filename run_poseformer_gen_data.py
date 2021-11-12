@@ -291,8 +291,8 @@ if not args.evaluate:
     epoch = 0
 
     ## RESUME
-    if False:
-        chkpt_path = "checkpoint/refinement_epoch-3_loss-0.0301.pkl"
+    if True:
+        chkpt_path = "checkpoint/refinement_fc_epoch-9_pdj-0.0128_improve-0.0019.pkl"
         checkpoint = torch.load(chkpt_path, map_location=lambda storage, loc: storage)
         if "model" in checkpoint:
             model_pos_refinement.load_state_dict(checkpoint["model"], strict=False)
@@ -323,6 +323,7 @@ if not args.evaluate:
         epoch_ori_loss = 0
         batch_idx = 0
         for cameras_train, batch_3d, batch_2d in train_generator.next_epoch():
+            break
             cameras_train = torch.from_numpy(cameras_train.astype('float32'))
             inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
@@ -393,19 +394,15 @@ if not args.evaluate:
                     gt_2d_flip[:, :, kps_left + kps_right, :] = gt_2d_flip[:, :, kps_right + kps_left, :]
 
                     ##### convert size
-                    inputs_2d_old = inputs_2d.clone()
                     inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d)
-                    inputs_2d_flip_old = inputs_2d_flip.clone()
                     inputs_2d_flip, _ = eval_data_prepare(receptive_field, inputs_2d_flip, inputs_3d)
 
                     gt_2d, _ = eval_data_prepare(receptive_field, gt_2d, inputs_3d)
-                    gt_2d_flip, _ = eval_data_prepare(receptive_field, gt_2d_flip, inputs_3d)
 
                     if torch.cuda.is_available():
                         inputs_2d = inputs_2d.cuda()
                         gt_2d = gt_2d.cuda()
                         inputs_2d_flip = inputs_2d_flip.cuda()
-                        gt_2d_flip = gt_2d_flip.cuda()
                         inputs_3d = inputs_3d.cuda()
                     inputs_3d[:, :, 0] = 0
                     
@@ -442,17 +439,17 @@ if not args.evaluate:
                                                   keepdim=True)
                     
                     
-                    # pdj = compute_pdj(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
-                    # o_pdj = compute_pdj(inputs_2d[:, frame_idx], gt_2d[:, frame_idx: frame_idx+1])
+                    pdj = compute_pdj(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
+                    o_pdj = compute_pdj(inputs_2d[:, frame_idx], gt_2d[:, frame_idx: frame_idx+1])
 
-                    error = mpjpe(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
-                    o_error = mpjpe(inputs_2d[:, frame_idx: frame_idx+1], gt_2d[:, frame_idx: frame_idx+1])
-                    eval_score += error * predicted_2d_pos.shape[0]
-                    ori_score += o_error * predicted_2d_pos.shape[0]
+                    # error = mpjpe(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1])
+                    # o_error = mpjpe(inputs_2d[:, frame_idx: frame_idx+1], gt_2d[:, frame_idx: frame_idx+1])
+                    eval_score += pdj * predicted_2d_pos.shape[0]
+                    ori_score += o_pdj * predicted_2d_pos.shape[0]
                     N += predicted_2d_pos.shape[0]
                     # import pdb; pdb.set_trace()
                     if batch_idx % 20 == 0:
-                        print("Eval epoch {}/{} - batch {} - mpjpe {:.4f} - ori mpjpe {:.4f} - avg. mpjpe {:.4f} - avg. ori mpjpe {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, error, o_error, eval_score/ N, ori_score/ N))
+                        print("Eval epoch {}/{} - batch {} - mpjpe {:.4f} - ori mpjpe {:.4f} - avg. mpjpe {:.4f} - avg. ori mpjpe {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, eval_score/ N, ori_score/ N))
                     batch_idx += 1
                 
                 mean_score = eval_score/ N
@@ -461,7 +458,7 @@ if not args.evaluate:
                 
                 if mean_score < best_score:
                     best_score = mean_score
-                    best_chk_path = "checkpoint/refinement_fc_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_score, mean_ori_score - mean_score)
+                    best_chk_path = "checkpoint/refinement_conv1x1_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_score, mean_ori_score - mean_score)
                     torch.save({
                         'epoch': epoch,
                         'lr': lr,
@@ -487,42 +484,78 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     epoch_loss_3d_pos_procrustes = 0
     epoch_loss_3d_pos_scale = 0
     epoch_loss_3d_vel = 0
+    epoch_pdj = 0
+    epoch_pdj_o = 0
     with torch.no_grad():
-        if not use_trajectory_model:
-            model_pos.eval()
-        # else:
-            # model_traj.eval()
+        model_pos.eval()
+        model_pos_refinement.eval()
         N = 0
+        N_2D = 0
         for _, batch, batch_2d in test_generator.next_epoch():
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
             inputs_3d = torch.from_numpy(batch.astype('float32'))
-
+            gt_2d = inputs_2d[..., :2]
+            inputs_2d = inputs_2d[..., 2:]
 
             ##### apply test-time-augmentation (following Videopose3d)
             inputs_2d_flip = inputs_2d.clone()
             inputs_2d_flip [:, :, :, 0] *= -1
             inputs_2d_flip[:, :, kps_left + kps_right,:] = inputs_2d_flip[:, :, kps_right + kps_left,:]
 
+            # gt point
+            gt_2d_flip = gt_2d.clone()
+            gt_2d_flip[:, :, :, 0] *= -1
+            gt_2d_flip[:, :, kps_left + kps_right, :] = gt_2d_flip[:, :, kps_right + kps_left, :]
+
             ##### convert size
             inputs_2d, inputs_3d = eval_data_prepare(receptive_field, inputs_2d, inputs_3d)
             inputs_2d_flip, _ = eval_data_prepare(receptive_field, inputs_2d_flip, inputs_3d)
 
+            gt_2d, _ = eval_data_prepare(receptive_field, gt_2d, inputs_3d)
+
             if torch.cuda.is_available():
                 inputs_2d = inputs_2d.cuda()
+                gt_2d = gt_2d.cuda()
                 inputs_2d_flip = inputs_2d_flip.cuda()
                 inputs_3d = inputs_3d.cuda()
             inputs_3d[:, :, 0] = 0
-
+            
+            # Predict 3D pose
             predicted_3d_pos = model_pos(inputs_2d)
             predicted_3d_pos_flip = model_pos(inputs_2d_flip)
+
+
+            # Refine 2D pose
+            frame_idx = inputs_2d.shape[1] // 2
+            pose_2d = inputs_2d[:, frame_idx]
+            pose_3d = predicted_3d_pos[:, 0]
+            inp_data = torch.cat([pose_2d, pose_3d], dim=2).permute(0, 2, 1)
+
+            predicted_2d_pos = model_pos_refinement(inp_data)
+            predicted_2d_pos = predicted_2d_pos.permute(0, 2, 1).unsqueeze(1)
+
+            pose_2d = inputs_2d_flip[:, frame_idx]
+            pose_3d = predicted_3d_pos_flip[:, 0]
+            inp_data = torch.cat([pose_2d, pose_3d], dim=2).permute(0, 2, 1)
+
+            predicted_2d_pos_flip = model_pos_refinement(inp_data)
+            predicted_2d_pos_flip = predicted_2d_pos_flip.permute(0, 2, 1).unsqueeze(1)
+
             predicted_3d_pos_flip[:, :, :, 0] *= -1
             predicted_3d_pos_flip[:, :, joints_left + joints_right] = predicted_3d_pos_flip[:, :,
                                                                       joints_right + joints_left]
 
+            predicted_2d_pos_flip[:, :, :, 0] *= -1
+            predicted_2d_pos_flip[:, :, joints_left + joints_right] = predicted_2d_pos_flip[:, :,
+                                                                        joints_right + joints_left]
+            
             predicted_3d_pos = torch.mean(torch.cat((predicted_3d_pos, predicted_3d_pos_flip), dim=1), dim=1,
                                           keepdim=True)
 
-            del inputs_2d, inputs_2d_flip
+            predicted_2d_pos = torch.mean(torch.cat((predicted_2d_pos, predicted_2d_pos_flip), dim=1), dim=1,
+                                                  keepdim=True)
+
+            # del inputs_2d, inputs_2d_flip
             torch.cuda.empty_cache()
 
             if return_predictions:
@@ -543,6 +576,27 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
             # Compute velocity error
             epoch_loss_3d_vel += inputs_3d.shape[0]*inputs_3d.shape[1] * mean_velocity_error(predicted_3d_pos, inputs)
 
+            # Compute for 2D poses
+            # pdj = mpjpe(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1]).item()
+            pdj = compute_pdj(predicted_2d_pos, gt_2d[:, frame_idx: frame_idx+1]).item()
+            o_pdj = compute_pdj(inputs_2d[:, frame_idx], gt_2d[:, frame_idx: frame_idx+1]).item()
+            # o_pdj = mpjpe(inputs_2d[:, frame_idx: frame_idx+1], gt_2d[:, frame_idx: frame_idx+1]).item()
+
+            epoch_pdj += pdj * predicted_2d_pos.shape[0]
+            epoch_pdj_o += o_pdj * predicted_2d_pos.shape[0]
+            N_2D +=  predicted_2d_pos.shape[0]
+
+
+            # Compute MPJPE with new 2D pose
+            # inputs_2d[:, frame_idx] = predicted_2d_pos[:, 0]
+            # predicted_3d_pos = model_pos(inputs_2d)
+            # inputs_2d_flip[:, frame_idx] = 
+            # predicted_3d_pos_flip = model_pos(inputs_2d_flip)
+            # predicted_3d_pos_flip[:, :, :, 0] *= -1
+            # predicted_3d_pos_flip[:, :, joints_left + joints_right] = predicted_3d_pos_flip[:, :,
+            #                                                           joints_right + joints_left]
+
+
     if action is None:
         print('----------')
     else:
@@ -551,13 +605,17 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
     e2 = (epoch_loss_3d_pos_procrustes / N)*1000
     e3 = (epoch_loss_3d_pos_scale / N)*1000
     ev = (epoch_loss_3d_vel / N)*1000
+    pdj_2d = epoch_pdj / N_2D
+    pdj_ori_2d = epoch_pdj_o / N_2D
     print('Protocol #1 Error (MPJPE):', e1, 'mm')
     print('Protocol #2 Error (P-MPJPE):', e2, 'mm')
     print('Protocol #3 Error (N-MPJPE):', e3, 'mm')
     print('Velocity Error (MPJVE):', ev, 'mm')
+    print('PDJ original:', pdj_ori_2d)
+    print('PDJ refinement:', pdj_2d)
     print('----------')
 
-    return e1, e2, e3, ev
+    return e1, e2, e3, ev, pdj_ori_2d, pdj_2d
 
 if args.render:
     print('Rendering...')
@@ -621,6 +679,11 @@ if args.render:
                          input_video_skip=args.viz_skip)
 
 else:
+    chkpt_path = "checkpoint/refinement_fc_epoch-9_pdj-0.0128_improve-0.0019.pkl"
+    checkpoint = torch.load(chkpt_path, map_location=lambda storage, loc: storage)
+    if "model" in checkpoint:
+        model_pos_refinement.load_state_dict(checkpoint["model"])
+
     print('Evaluating...')
     all_actions = {}
     all_actions_by_subject = {}
@@ -668,6 +731,8 @@ else:
         errors_p2 = []
         errors_p3 = []
         errors_vel = []
+        pdj_ori = []
+        pdj_ref = []
 
         for action_key in actions.keys():
             if action_filter is not None:
@@ -684,16 +749,20 @@ else:
                                      pad=pad, causal_shift=causal_shift, augment=args.test_time_augmentation,
                                      kps_left=kps_left, kps_right=kps_right, joints_left=joints_left,
                                      joints_right=joints_right)
-            e1, e2, e3, ev = evaluate(gen, action_key)
+            e1, e2, e3, ev, po, pr = evaluate(gen, action_key)
             errors_p1.append(e1)
             errors_p2.append(e2)
             errors_p3.append(e3)
             errors_vel.append(ev)
+            pdj_ori.append(po)
+            pdj_ref.append(pr)
 
         print('Protocol #1   (MPJPE) action-wise average:', round(np.mean(errors_p1), 1), 'mm')
         print('Protocol #2 (P-MPJPE) action-wise average:', round(np.mean(errors_p2), 1), 'mm')
         print('Protocol #3 (N-MPJPE) action-wise average:', round(np.mean(errors_p3), 1), 'mm')
         print('Velocity      (MPJVE) action-wise average:', round(np.mean(errors_vel), 2), 'mm')
+        print('PDJ            origin action-wise average:', round(np.mean(pdj_ori), 2))
+        print('PDJ        refinement action-wise average:', round(np.mean(pdj_ref), 2))
 
 
     if not args.by_subject:
