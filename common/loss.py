@@ -7,6 +7,28 @@
 
 import torch
 import numpy as np
+from .valid_angle_check import h36m_valid_angle_check_torch
+
+def angle_loss(y):
+    ang_names = list(valid_ang.keys())
+    y = y.reshape([-1, y.shape[-1]])
+    ang_cos = h36m_valid_angle_check_torch(y)
+    loss = torch.tensor(0, dtype=dtype, device=device)
+    b = 1
+    for an in ang_names:
+        lower_bound = valid_ang[an][0]
+        if lower_bound >= -0.98:
+            # loss += torch.exp(-b * (ang_cos[an] - lower_bound)).mean()
+            if torch.any(ang_cos[an] < lower_bound):
+                # loss += b * torch.exp(-(ang_cos[an][ang_cos[an] < lower_bound] - lower_bound)).mean()
+                loss += (ang_cos[an][ang_cos[an] < lower_bound] - lower_bound).pow(2).mean()
+        upper_bound = valid_ang[an][1]
+        if upper_bound <= 0.98:
+            # loss += torch.exp(b * (ang_cos[an] - upper_bound)).mean()
+            if torch.any(ang_cos[an] > upper_bound):
+                # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
+                loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).mean()
+    return loss
 
 def mpjpe(predicted, target):
     """
