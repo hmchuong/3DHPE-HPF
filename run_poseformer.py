@@ -309,7 +309,7 @@ if not args.evaluate:
             del inputs_2d
             torch.cuda.empty_cache()
 
-            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d) + angle_loss(predicted_3d_pos)
             epoch_loss_3d_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 

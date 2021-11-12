@@ -4,16 +4,17 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 #
-
+import pickle
 import torch
 import numpy as np
 from .valid_angle_check import h36m_valid_angle_check_torch
 
+valid_ang = pickle.load(open('./data/h36m_valid_angle.p', "rb"))
 def angle_loss(y):
     ang_names = list(valid_ang.keys())
     y = y.reshape([-1, y.shape[-1]])
     ang_cos = h36m_valid_angle_check_torch(y)
-    loss = torch.tensor(0, dtype=dtype, device=device)
+    loss = torch.tensor(0, dtype=y.dtype, device=y.device)
     b = 1
     for an in ang_names:
         lower_bound = valid_ang[an][0]
