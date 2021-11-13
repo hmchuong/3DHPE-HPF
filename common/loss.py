@@ -10,10 +10,12 @@ import numpy as np
 from .valid_angle_check import h36m_valid_angle_check_torch
 
 valid_ang = pickle.load(open('./data/h36m_valid_angle.p', "rb"))
-def angle_loss(y):
+def angle_loss(y, y_gt):
     ang_names = list(valid_ang.keys())
-    y = y.reshape([-1, y.shape[-1]])
+    y = y.reshape([-1, 17, 3])
+    y_gt = y_gt.reshape([-1, 17, 3])
     ang_cos = h36m_valid_angle_check_torch(y)
+    ang_cos_gt = h36m_valid_angle_check_torch(y_gt)
     loss = torch.tensor(0, dtype=y.dtype, device=y.device)
     b = 1
     for an in ang_names:
@@ -29,6 +31,9 @@ def angle_loss(y):
             if torch.any(ang_cos[an] > upper_bound):
                 # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
                 loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).mean()
+        # print(ang_cos[an].shape, ang_cos_gt[an].shape)
+        # loss += (ang_cos[an] - ang_cos_gt[an]).pow(2).mean()
+    print(loss)
     return loss
 
 def mpjpe(predicted, target):

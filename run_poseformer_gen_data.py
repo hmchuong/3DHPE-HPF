@@ -300,11 +300,11 @@ if not args.evaluate:
 
         lr = checkpoint['lr']
     
-    best_score = 999999
+    best_score = 0
     epoch = 0
 
     ## RESUME
-    if True:
+    if False:
         chkpt_path = "checkpoint/refinement_fc_epoch-9_pdj-0.0128_improve-0.0019.pkl"
         checkpoint = torch.load(chkpt_path, map_location=lambda storage, loc: storage)
         if "model" in checkpoint:
@@ -336,7 +336,6 @@ if not args.evaluate:
         epoch_ori_loss = 0
         batch_idx = 0
         for cameras_train, batch_3d, batch_2d in train_generator.next_epoch():
-            break
             cameras_train = torch.from_numpy(cameras_train.astype('float32'))
             inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
@@ -462,16 +461,16 @@ if not args.evaluate:
                     N += predicted_2d_pos.shape[0]
                     # import pdb; pdb.set_trace()
                     if batch_idx % 20 == 0:
-                        print("Eval epoch {}/{} - batch {} - mpjpe {:.4f} - ori mpjpe {:.4f} - avg. mpjpe {:.4f} - avg. ori mpjpe {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, eval_score/ N, ori_score/ N))
+                        print("Eval epoch {}/{} - batch {} - pdj {:.4f} - ori pdj {:.4f} - avg. pdj {:.4f} - avg. ori pdj {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, eval_score/ N, ori_score/ N))
                     batch_idx += 1
                 
                 mean_score = eval_score/ N
                 mean_ori_score = ori_score/ N
-                print("Eval epoch {}/{} - Mean MPJE: {:.4f} - Improvement: {:.4f}".format(epoch + 1, args.epochs, mean_score, mean_ori_score - mean_score))
+                print("Eval epoch {}/{} - Mean PDJ: {:.4f} - Improvement: {:.4f}".format(epoch + 1, args.epochs, mean_score, mean_score - mean_ori_score))
                 
-                if mean_score < best_score:
+                if mean_score > best_score:
                     best_score = mean_score
-                    best_chk_path = "checkpoint/refinement_conv1x1_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_score, mean_ori_score - mean_score)
+                    best_chk_path = "checkpoint/refinement_fc_epoch-{}_pdj-{:.4f}_improve-{:.4f}.pkl".format(epoch, mean_score, mean_ori_score - mean_score)
                     torch.save({
                         'epoch': epoch,
                         'lr': lr,

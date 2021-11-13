@@ -5,10 +5,8 @@ import pickle
 
 def h36m_valid_angle_check(p3d):
     """
-    p3d: [bs,16,3] or [bs,48]
+    p3d: [bs,16,3] or [bs,17, 3]
     """
-    if p3d.shape[-1] == 48:
-        p3d = p3d.reshape([p3d.shape[0], 16, 3])
 
     cos_func = lambda p1, p2: np.sum(p1 * p2, axis=1) / np.linalg.norm(p1, axis=1) / np.linalg.norm(p2, axis=1)
     data_all = p3d
@@ -38,17 +36,17 @@ def h36m_valid_angle_check(p3d):
     valid_cos['Leg2HipPlane'] = np.vstack((cos_gt_l, cos_gt_r))
 
     # Shoulder2Hip
-    p1 = data_all[:, 10] - data_all[:, 7]
+    p1 = data_all[:, 11] - data_all[:, 7]
     p2 = data_all[:, 3]
     cos_gt_l = np.sum(p1 * p2, axis=1) / np.linalg.norm(p1, axis=1) / np.linalg.norm(p2, axis=1)
-    p1 = data_all[:, 13] - data_all[:, 7]
+    p1 = data_all[:, 14] - data_all[:, 7]
     p2 = data_all[:, 0]
     cos_gt_r = np.sum(p1 * p2, axis=1) / np.linalg.norm(p1, axis=1) / np.linalg.norm(p2, axis=1)
     valid_cos['Shoulder2Hip'] = np.vstack((cos_gt_l, cos_gt_r))
 
     # Leg2ShoulderPlane
-    p0 = data_all[:, 13]
-    p1 = data_all[:, 10]
+    p0 = data_all[:, 14]
+    p1 = data_all[:, 11]
     p2 = data_all[:, 4]
     p3 = data_all[:, 1]
     n0 = np.cross(p0, p1)
@@ -57,8 +55,8 @@ def h36m_valid_angle_check(p3d):
     valid_cos['Leg2ShoulderPlane'] = np.vstack((cos_gt_l, cos_gt_r))
 
     # Shoulder2Shoulder
-    p0 = data_all[:, 13] - data_all[:, 7]
-    p1 = data_all[:, 10] - data_all[:, 7]
+    p0 = data_all[:, 14] - data_all[:, 7]
+    p1 = data_all[:, 11] - data_all[:, 7]
     cos_gt = np.sum(p0 * p1, axis=1) / np.linalg.norm(p0, axis=1) / np.linalg.norm(p1, axis=1)
     valid_cos['Shoulder2Shoulder'] = cos_gt
 
@@ -99,8 +97,8 @@ def h36m_valid_angle_check(p3d):
     # ShoulderPlane2HipPlane (25 Jan)
     p1 = data_all[:, 7] - data_all[:, 3]
     p2 = data_all[:, 7] - data_all[:, 0]
-    p3 = data_all[:, 10]
-    p4 = data_all[:, 13]
+    p3 = data_all[:, 11]
+    p4 = data_all[:, 14]
     n0 = np.cross(p2, p1)
     n1 = np.cross(p3, p4)
     cos_gt_l = np.sum(n0 * n1, axis=1) / np.linalg.norm(n0, axis=1) / np.linalg.norm(n1, axis=1)
@@ -108,21 +106,21 @@ def h36m_valid_angle_check(p3d):
 
     # Head2Neck
     p1 = data_all[:, 7] - data_all[:, 6]
-    p2 = data_all[:, 8] - data_all[:, 7]
+    p2 = data_all[:, 9] - data_all[:, 7]
     cos_gt_l = np.sum(p1 * p2, axis=1) / np.linalg.norm(p1, axis=1) / np.linalg.norm(p2, axis=1)
     valid_cos['Head2Neck'] = cos_gt_l
 
     # Head2HeadTop
-    p1 = data_all[:, 9] - data_all[:, 8]
-    p2 = data_all[:, 8] - data_all[:, 7]
+    p1 = data_all[:, 10] - data_all[:, 9]
+    p2 = data_all[:, 9] - data_all[:, 7]
     cos_gt_l = np.sum(p1 * p2, axis=1) / np.linalg.norm(p1, axis=1) / np.linalg.norm(p2, axis=1)
     valid_cos['Head2HeadTop'] = cos_gt_l
 
     # HeadVerticalPlane2HipPlane
-    p1 = data_all[:, 9] - data_all[:, 8]
-    p2 = data_all[:, 8] - data_all[:, 7]
+    p1 = data_all[:, 10] - data_all[:, 9]
+    p2 = data_all[:, 9] - data_all[:, 7]
     n0 = np.cross(p1, p2)
-    p3 = data_all[:, 9] - data_all[:, 7]
+    p3 = data_all[:, 10] - data_all[:, 7]
     n1 = np.cross(n0, p3)
     p4 = data_all[:, 7] - data_all[:, 0]
     p5 = data_all[:, 7] - data_all[:, 3]
@@ -131,10 +129,10 @@ def h36m_valid_angle_check(p3d):
     valid_cos['HeadVerticalPlane2HipPlane'] = cos_gt_l
 
     # Shoulder2Neck
-    p1 = data_all[:, 10] - data_all[:, 7]
+    p1 = data_all[:, 11] - data_all[:, 7]
     p2 = data_all[:, 6] - data_all[:, 7]
     cos_gt_l = cos_func(p1, p2)
-    p1 = data_all[:, 13] - data_all[:, 7]
+    p1 = data_all[:, 14] - data_all[:, 7]
     p2 = data_all[:, 6] - data_all[:, 7]
     cos_gt_r = cos_func(p1, p2)
     valid_cos['Shoulder2Neck'] = np.vstack((cos_gt_l, cos_gt_r))
@@ -144,12 +142,10 @@ def h36m_valid_angle_check(p3d):
 
 def h36m_valid_angle_check_torch(p3d):
     """
-    p3d: [bs,16,3] or [bs,48]
+    p3d: [bs,16,3] or [bs,17, 3]
     """
-    if len(p3d.shape) == 4:
-        p3d = p3d.reshape([p3d.shape[0] * p3d.shape[1], 16, 3])
-    if p3d.shape[-1] == 48:
-        p3d = p3d.reshape([p3d.shape[0], 16, 3])
+    if p3d.shape[1] == 17:
+        p3d = p3d[:, 1:]
     data_all = p3d
     cos_func = lambda p1, p2: torch.sum(p1 * p2, dim=1) / torch.norm(p1, dim=1) / torch.norm(p2, dim=1)
 
@@ -277,7 +273,6 @@ def h36m_valid_angle_check_torch(p3d):
     valid_cos['Shoulder2Neck'] = torch.vstack((cos_gt_l, cos_gt_r))
 
     return valid_cos
-
 
 def humaneva_valid_angle_check(p3d):
     """
