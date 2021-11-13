@@ -223,6 +223,8 @@ def h36m_valid_angle_check_torch(p3d):
     cos_gt_l1 = cos_gt_l[cos_dir_l < 0]
     cos_gt_r1 = cos_gt_r[cos_dir_r < 0]
     valid_cos['Spine2HipPlane1'] = torch.hstack((cos_gt_l1, cos_gt_r1))
+    
+    valid_cos['Spine2HipPlane'] = torch.hstack((cos_gt_l, cos_gt_r))
 
     # Spine2HipPlane2
     cos_gt_l2 = cos_gt_l[cos_dir_l >= 0]

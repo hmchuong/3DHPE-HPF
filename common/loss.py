@@ -19,21 +19,25 @@ def angle_loss(y, y_gt):
     loss = torch.tensor(0, dtype=y.dtype, device=y.device)
     b = 1
     for an in ang_names:
-        lower_bound = valid_ang[an][0]
-        if lower_bound >= -0.98:
-            # loss += torch.exp(-b * (ang_cos[an] - lower_bound)).mean()
-            if torch.any(ang_cos[an] < lower_bound):
-                # loss += b * torch.exp(-(ang_cos[an][ang_cos[an] < lower_bound] - lower_bound)).mean()
-                loss += (ang_cos[an][ang_cos[an] < lower_bound] - lower_bound).pow(2).mean()
-        upper_bound = valid_ang[an][1]
-        if upper_bound <= 0.98:
-            # loss += torch.exp(b * (ang_cos[an] - upper_bound)).mean()
-            if torch.any(ang_cos[an] > upper_bound):
-                # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
-                loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).mean()
-        # print(ang_cos[an].shape, ang_cos_gt[an].shape)
-        # loss += (ang_cos[an] - ang_cos_gt[an]).pow(2).mean()
-    print(loss)
+        valid = torch.ones_like(ang_cos[an])
+        if an != "Spine2HipPlane":
+            lower_bound = valid_ang[an][0]
+            if lower_bound >= -0.98:
+                # loss += torch.exp(-b * (ang_cos[an] - lower_bound)).mean()
+                if torch.any(ang_cos[an] < lower_bound):
+                    # loss += b * torch.exp(-(ang_cos[an][ang_cos[an] < lower_bound] - lower_bound)).mean()
+                    loss += (ang_cos[an][ang_cos[an] < lower_bound] - lower_bound).pow(2).mean()
+                    valid[ang_cos[an] < lower_bound] = 0
+            upper_bound = valid_ang[an][1]
+            if upper_bound <= 0.98:
+                # loss += torch.exp(b * (ang_cos[an] - upper_bound)).mean()
+                if torch.any(ang_cos[an] > upper_bound):
+                    # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
+                    loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).mean()
+                    valid[ang_cos[an] > upper_bound] = 0
+        if not an in ["Spine2HipPlane1", "Spine2HipPlane2"]:
+            if torch.any(valid > 0):
+                loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).mean()
     return loss
 
 def mpjpe(predicted, target):

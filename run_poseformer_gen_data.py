@@ -380,7 +380,7 @@ if not args.evaluate:
             model_pos.load_state_dict(model_pos_train.state_dict(), strict=False)
             model_pos.eval()
             model_pos_refinement.eval()
-            
+            torch.cuda.empty_cache()
             if not args.no_eval:
                 eval_score = 0
                 ori_score = 0
@@ -463,6 +463,8 @@ if not args.evaluate:
                     if batch_idx % 20 == 0:
                         print("Eval epoch {}/{} - batch {} - pdj {:.4f} - ori pdj {:.4f} - avg. pdj {:.4f} - avg. ori pdj {:.4f}".format(epoch + 1, args.epochs, batch_idx + 1, pdj, o_pdj, eval_score/ N, ori_score/ N))
                     batch_idx += 1
+                    del inputs_2d, gt_2d, inputs_2d_flip, inputs_3d, inp_data, predicted_3d_pos, predicted_2d_pos
+                    torch.cuda.empty_cache()
                 
                 mean_score = eval_score/ N
                 mean_ori_score = ori_score/ N
@@ -632,6 +634,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
 
             # Compute velocity error
             epoch_loss_3d_vel_ref += inputs_3d.shape[0]*inputs_3d.shape[1] * mean_velocity_error(predicted_3d_pos, inputs)
+            torch.cuda.empty_cache()
 
 
     if action is None:
@@ -726,7 +729,7 @@ if args.render:
                          input_video_skip=args.viz_skip)
 
 else:
-    chkpt_path = "checkpoint/refinement_fc_epoch-9_pdj-0.0128_improve-0.0019.pkl"
+    chkpt_path = "checkpoint/refinement_fc_epoch-8_pdj-0.9493_improve--0.0022.pkl"
     checkpoint = torch.load(chkpt_path, map_location=lambda storage, loc: storage)
     if "model" in checkpoint:
         model_pos_refinement.load_state_dict(checkpoint["model"])
