@@ -134,7 +134,20 @@ class PoseTransformer(nn.Module):
         self.Temporal_norm = norm_layer(embed_dim)
 
         ####### A easy way to implement weighted mean
-        self.weighted_mean = torch.nn.Conv1d(in_channels=num_frame, out_channels=1, kernel_size=1)
+        self.use_attention_pooling = False
+        if self.use_attention_pooling:
+            self.attention_score_generator = nn.Sequential(
+                                                nn.Linear(embed_dim, embed_dim),
+                                                nn.Dropout(.1)
+                                                # nn.Sigmoid()
+                                            )
+            self.weighted_mean = self.attention_layer
+        else:
+            self.weighted_mean = nn.Sequential(
+                                                nn.Conv1d(in_channels=num_frame, out_channels=1, kernel_size=1),
+                                                nn.Dropout(.0)
+                                                # nn.Sigmoid()
+                                              )
 
         self.head = nn.Sequential(
             nn.LayerNorm(embed_dim),
@@ -157,6 +170,19 @@ class PoseTransformer(nn.Module):
         x = rearrange(x, '(b f) w c -> b f (w c)', f=f)
         return x
 
+    def attention_layer(self, x, pos_emb):
+        b, f, emb_dim = x.shape
+        attention_weights = self.attention_score_generator(x + pos_emb) # generating attention score just based on the embedding and its position in the sequences
+        attention_weights = F.softmax(attention_weights, dim=1)
+        ##### x size [b, f, emb_dim]
+        ##### attention_weights size [b, f, emb_dim]
+        # attention_weights = attention_weights.permute(0, 2, 1).contiguous()
+        x = x * attention_weights
+        x = torch.sum(x, 1) ##### x size [b, emb_dim]
+        assert x.shape[0] == b
+        assert x.shape[1] == emb_dim
+        return x
+
     def forward_features(self, x):
         b  = x.shape[0]
         x += self.Temporal_pos_embed
@@ -166,7 +192,10 @@ class PoseTransformer(nn.Module):
 
         x = self.Temporal_norm(x)
         ##### x size [b, f, emb_dim], then take weighted mean on frame dimension, we only predict 3D pose of the center frame
-        x = self.weighted_mean(x)
+        if self.use_attention_pooling:
+            x = self.weighted_mean(x, self.Temporal_pos_embed)
+        else:
+            x = self.weighted_mean(x)
         x = x.view(b, 1, -1)
         return x
 
@@ -182,4 +211,3 @@ class PoseTransformer(nn.Module):
         x = x.view(b, 1, p, -1)
 
         return x
-
