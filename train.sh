@@ -1,1 +1,1 @@
-python run_poseformer_gen_data.py -k combine -f 81 -lr 0.01 --batch-size 5120 -lrd 0.99 -c checkpoint --resume detected81f.bin
+CUDA_VISIBLE_DEVICES=2,3,5,7 python3.7 run_poseformer.py -k cpn_ft_h36m_dbb -f 81 -lr 0.00004 -lrd 0.99 --batch-size 2048

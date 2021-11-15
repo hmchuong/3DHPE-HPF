@@ -136,18 +136,17 @@ class PoseTransformer(nn.Module):
         ####### A easy way to implement weighted mean
         self.use_attention_pooling = False
         if self.use_attention_pooling:
+            print('--- Using Attention Weights before the last layer ---')
+            lower_dim = int(64*1.5)
             self.attention_score_generator = nn.Sequential(
-                                                nn.Linear(embed_dim, embed_dim),
-                                                nn.Dropout(.1)
-                                                # nn.Sigmoid()
-                                            )
+                                                nn.Linear(embed_dim, lower_dim),
+                                                nn.Dropout(.0),
+                                                nn.Linear(lower_dim, embed_dim),
+                                                nn.Dropout(.0),
+                                             )
             self.weighted_mean = self.attention_layer
         else:
-            self.weighted_mean = nn.Sequential(
-                                                nn.Conv1d(in_channels=num_frame, out_channels=1, kernel_size=1),
-                                                nn.Dropout(.0)
-                                                # nn.Sigmoid()
-                                              )
+            self.weighted_mean = nn.Conv1d(in_channels=num_frame, out_channels=1, kernel_size=1)
 
         self.head = nn.Sequential(
             nn.LayerNorm(embed_dim),

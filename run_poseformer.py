@@ -314,9 +314,9 @@ if not args.evaluate:
             epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_ang.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-            loss_total = loss_3d_pos #+ loss_ang
+            loss_total = loss_3d_pos + loss_ang
             if batch_idx % 100 == 0:
-                print("Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(
+                print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(
                     epoch + 1, batch_idx + 1, train_generator.num_batches, loss_3d_pos.item(), loss_ang.item(), loss_total.item(), epoch_loss_3d_train / N, epoch_loss_angle_train / N))
 
             loss_total.backward()
@@ -340,7 +340,9 @@ if not args.evaluate:
             N = 0
             if not args.no_eval:
                 print("Evaluating ...")
+                print("Evaluating on test set:")
                 # Evaluate on test set
+                batch_idx = 0
                 for cam, batch, batch_2d in test_generator.next_epoch():
                     inputs_3d = torch.from_numpy(batch.astype('float32'))
                     inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
@@ -370,13 +372,16 @@ if not args.evaluate:
                                                   keepdim=True)
 
                     del inputs_2d, inputs_2d_flip
-                    torch.cuda.empty_cache()
 
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_valid += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
                     del inputs_3d, loss_3d_pos, predicted_3d_pos
+                    if batch_idx % 20 == 0:
+                        print("Evaluation: Epoch {} - Batch {}/{}".format(
+                            epoch + 1, batch_idx + 1, test_generator.num_batches))
+                    batch_idx += 1
                     torch.cuda.empty_cache()
 
                 losses_3d_valid.append(epoch_loss_3d_valid / N)
@@ -386,6 +391,8 @@ if not args.evaluate:
                 epoch_loss_traj_train_eval = 0
                 epoch_loss_2d_train_labeled_eval = 0
                 N = 0
+                batch_idx = 0
+                print("Evaluating on train set:")
                 for cam, batch, batch_2d in train_generator_eval.next_epoch():
                     if batch_2d.shape[1] == 0:
                         # This can only happen when downsampling the dataset
@@ -405,13 +412,16 @@ if not args.evaluate:
                     predicted_3d_pos = model_pos(inputs_2d)
 
                     del inputs_2d
-                    torch.cuda.empty_cache()
 
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_train_eval += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
                     del inputs_3d, loss_3d_pos, predicted_3d_pos
+                    if batch_idx % 20 == 0:
+                        print("Evaluation: Epoch {} - Batch {}/{}".format(
+                            epoch + 1, batch_idx + 1, train_generator_eval.num_batches))
+                    batch_idx += 1
                     torch.cuda.empty_cache()
 
                 losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
