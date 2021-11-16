@@ -379,8 +379,8 @@ if not args.evaluate:
 
                     del inputs_3d, loss_3d_pos, predicted_3d_pos
                     if batch_idx % 20 == 0:
-                        print("Evaluation: Epoch {} - Batch {}/{}".format(
-                            epoch + 1, batch_idx + 1, test_generator.num_batches))
+                        print("Evaluation: Epoch {} - Batch {}".format(
+                            epoch + 1, batch_idx + 1))
                     batch_idx += 1
                     torch.cuda.empty_cache()
 
@@ -419,8 +419,8 @@ if not args.evaluate:
 
                     del inputs_3d, loss_3d_pos, predicted_3d_pos
                     if batch_idx % 20 == 0:
-                        print("Evaluation: Epoch {} - Batch {}/{}".format(
-                            epoch + 1, batch_idx + 1, train_generator_eval.num_batches))
+                        print("Evaluation: Epoch {} - Batch {}".format(
+                            epoch + 1, batch_idx + 1))
                     batch_idx += 1
                     torch.cuda.empty_cache()
 
