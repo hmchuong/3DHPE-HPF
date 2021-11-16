@@ -166,6 +166,7 @@ class ChunkedGenerator:
 
                 if self.endless:
                     self.state = (b_i + 1, pairs)
+                # Generate mask
                 if self.poses_3d is None and self.cameras is None:
                     yield None, None, self.batch_2d[:len(chunks)]
                 elif self.poses_3d is not None and self.cameras is None:
