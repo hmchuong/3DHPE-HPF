@@ -35,9 +35,9 @@ def angle_loss(y, y_gt):
                     # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
                     loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).mean()
                     valid[ang_cos[an] > upper_bound] = 0
-        # if not an in ["Spine2HipPlane1", "Spine2HipPlane2"]:
-        #     if torch.any(valid > 0):
-        #         loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).mean()
+        if not an in ["Spine2HipPlane1", "Spine2HipPlane2"]:
+            if torch.any(valid > 0):
+                loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).mean()
     return loss
 
 def mpjpe(predicted, target):

@@ -6,7 +6,6 @@ from functools import partial
 from collections import OrderedDict
 from einops import rearrange, repeat
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -108,7 +107,6 @@ class PoseTransformer(nn.Module):
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
         embed_dim = embed_dim_ratio * num_joints   #### temporal embed_dim is num_joints * spatial embedding dim ratio
         out_dim = num_joints * 3     #### output dimension is num_joints * 3
-        self.random = np.random.RandomState(1234)
 
         ### spatial patch embedding
         self.Spatial_patch_to_embedding = nn.Linear(in_chans, embed_dim_ratio)
@@ -136,7 +134,23 @@ class PoseTransformer(nn.Module):
         self.Temporal_norm = norm_layer(embed_dim)
 
         ####### A easy way to implement weighted mean
-        self.weighted_mean = torch.nn.Conv1d(in_channels=num_frame, out_channels=1, kernel_size=1)
+        self.use_attention_pooling = True
+        if self.use_attention_pooling:
+            print('--- Using Attention Weights before the last layer ---')
+            lower_dim = int(64*1.5)
+            self.attention_score_generator = nn.Sequential(
+                                                nn.Linear(embed_dim, lower_dim),
+                                                nn.Dropout(.0),
+                                                nn.Linear(lower_dim, embed_dim),
+                                                nn.Dropout(.0),
+                                             )
+            self.weighted_mean = self.attention_layer
+        else:
+            self.weighted_mean = nn.Sequential(
+                                                nn.Conv1d(in_channels=num_frame, out_channels=1, kernel_size=1),
+                                                nn.Dropout(.0)
+                                                # nn.Sigmoid()
+                                              )
 
         self.head = nn.Sequential(
             nn.LayerNorm(embed_dim),
@@ -159,6 +173,19 @@ class PoseTransformer(nn.Module):
         x = rearrange(x, '(b f) w c -> b f (w c)', f=f)
         return x
 
+    def attention_layer(self, x, pos_emb):
+        b, f, emb_dim = x.shape
+        attention_weights = self.attention_score_generator(x + pos_emb) # generating attention score just based on the embedding and its position in the sequences
+        attention_weights = F.softmax(attention_weights, dim=1)
+        ##### x size [b, f, emb_dim]
+        ##### attention_weights size [b, f, emb_dim]
+        # attention_weights = attention_weights.permute(0, 2, 1).contiguous()
+        x = x * attention_weights
+        x = torch.sum(x, 1) ##### x size [b, emb_dim]
+        assert x.shape[0] == b
+        assert x.shape[1] == emb_dim
+        return x
+
     def forward_features(self, x):
         b  = x.shape[0]
         x += self.Temporal_pos_embed
@@ -168,51 +195,19 @@ class PoseTransformer(nn.Module):
 
         x = self.Temporal_norm(x)
         ##### x size [b, f, emb_dim], then take weighted mean on frame dimension, we only predict 3D pose of the center frame
-        x = self.weighted_mean(x)
+        if self.use_attention_pooling:
+            x = self.weighted_mean(x, self.Temporal_pos_embed)
+        else:
+            x = self.weighted_mean(x)
         x = x.view(b, 1, -1)
         return x
 
 
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)
-        b, _, r, p = x.shape
+        b, _, _, p = x.shape
         ### now x is [batch_size, 2 channels, receptive frames, joint_num], following image data
-        # MASKING
-        use_masking = False
-        if self.training and use_masking:
-            mvm_percent = 0.1
-            mask = torch.ones_like(x)
-            
-            # Masking vertices
-            pb = self.random.random_sample()
-            masked_num = int(pb * mvm_percent * p * r * b)
-            indices = self.random.choice(np.arange(p * r * b),replace=False,size=masked_num)
-            mask = mask.permute(0, 2, 3, 1).reshape(-1, 2)
-            mask[indices] = 0
-
-            # Masking poses
-            pb = self.random.random_sample()
-            masked_num = int(pb * mvm_percent * r * b)
-            indices = self.random.choice(np.arange(r * b),replace=False,size=masked_num)
-            mask = mask.reshape(-1, p, 2)
-            mask[indices] = 0
-
-            # Masking
-            constant_tensor = torch.ones_like(x) * 0.001
-            mask = mask.reshape(b, r, p, 2).permute(0, 3, 1, 2)
-            x = x * mask + constant_tensor * (1 - mask)
-
-                
-        # import pdb; pdb.set_trace()
         x = self.Spatial_forward_features(x)
-        # masking one more time here
-        if self.training and use_masking:
-            
-            pose_mask = torch.ones_like(x).cuda(x.device)
-            pose_mask[mask.sum((1,3)) == (2 * p)] = 0
-            constant_tensor = torch.ones_like(x).cuda(x.device) * 0.001
-
-            x = pose_mask * x + constant_tensor * (1 - pose_mask)
         x = self.forward_features(x)
         x = self.head(x)
 
