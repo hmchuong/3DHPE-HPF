@@ -16,6 +16,15 @@ from timm.models.helpers import load_pretrained
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 
+def positional_encoding(max_position, d_model, min_freq=1e-4):
+    position = np.arange(max_position)
+    freqs = min_freq**(2*(np.arange(d_model)//2)/d_model)
+    pos_enc = position.reshape(-1,1)*freqs.reshape(1,-1)
+    pos_enc[:, ::2] = np.cos(pos_enc[:, ::2])
+    pos_enc[:, 1::2] = np.sin(pos_enc[:, 1::2])
+    return pos_enc
+
+positional_encoding_81f = positional_encoding(81, 544).astype(np.float64)
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -143,6 +152,11 @@ class PoseTransformer(nn.Module):
             nn.Linear(embed_dim , out_dim),
         )
 
+        self.use_vertice_masking = False
+        self.use_pose_masking = False
+        self.vetices_mvm_percent = 0.3
+        self.poses_mvm_percent = 0.4
+
 
     def Spatial_forward_features(self, x):
         b, _, f, p = x.shape  ##### b is batch size, f is number of frames, p is number of joints
@@ -150,7 +164,8 @@ class PoseTransformer(nn.Module):
 
         x = self.Spatial_patch_to_embedding(x)
         x += self.Spatial_pos_embed
-        x = self.pos_drop(x)
+        if not self.use_vertice_masking:
+            x = self.pos_drop(x)
 
         for blk in self.Spatial_blocks:
             x = blk(x)
@@ -162,7 +177,8 @@ class PoseTransformer(nn.Module):
     def forward_features(self, x):
         b  = x.shape[0]
         x += self.Temporal_pos_embed
-        x = self.pos_drop(x)
+        if not self.use_pose_masking:
+            x = self.pos_drop(x)
         for blk in self.blocks:
             x = blk(x)
 
@@ -178,41 +194,47 @@ class PoseTransformer(nn.Module):
         b, _, r, p = x.shape
         ### now x is [batch_size, 2 channels, receptive frames, joint_num], following image data
         # MASKING
-        use_masking = False
-        if self.training and use_masking:
-            mvm_percent = 0.1
+        # masking_pose = self.random.random_sample() >= 0.5
+        if self.training and (self.use_pose_masking or self.use_vertice_masking):
+            
             mask = torch.ones_like(x)
             
             # Masking vertices
             pb = self.random.random_sample()
-            masked_num = int(pb * mvm_percent * p * r * b)
+            masked_num = int(pb * self.vetices_mvm_percent * p * r * b)
             indices = self.random.choice(np.arange(p * r * b),replace=False,size=masked_num)
             mask = mask.permute(0, 2, 3, 1).reshape(-1, 2)
             mask[indices] = 0
 
             # Masking poses
-            pb = self.random.random_sample()
-            masked_num = int(pb * mvm_percent * r * b)
-            indices = self.random.choice(np.arange(r * b),replace=False,size=masked_num)
-            mask = mask.reshape(-1, p, 2)
-            mask[indices] = 0
+            if self.use_pose_masking:
+                pb = self.random.random_sample()
+                masked_num = int(pb * self.poses_mvm_percent * r * b)
+                indices = self.random.choice(np.arange(r * b),replace=False,size=masked_num)
+                mask = mask.reshape(-1, p, 2)
+                mask[indices] = 0
 
             # Masking
             constant_tensor = torch.ones_like(x) * 0.001
             mask = mask.reshape(b, r, p, 2).permute(0, 3, 1, 2)
-            x = x * mask + constant_tensor * (1 - mask)
+            if self.use_vertice_masking:
+                x = x * mask + constant_tensor * (1 - mask)
 
                 
         # import pdb; pdb.set_trace()
         x = self.Spatial_forward_features(x)
         # masking one more time here
-        if self.training and use_masking:
-            
+        
+        if self.training and self.use_pose_masking:
             pose_mask = torch.ones_like(x).cuda(x.device)
             pose_mask[mask.sum((1,3)) == (2 * p)] = 0
             constant_tensor = torch.ones_like(x).cuda(x.device) * 0.001
 
             x = pose_mask * x + constant_tensor * (1 - pose_mask)
+        # import pdb; pdb.set_trace();
+        pe = torch.from_numpy(positional_encoding_81f).cuda(x.device)
+        pe = pe.unsqueeze(0).repeat(x.shape[0], 1, 1)
+        x = x + pe.type(x.dtype)
         x = self.forward_features(x)
         x = self.head(x)
 

@@ -311,13 +311,13 @@ if not args.evaluate:
             predicted_3d_pos = model_pos_train(inputs_2d)
             # del inputs_2d
             # torch.cuda.empty_cache()
-            loss_ang = angle_loss(predicted_3d_pos, inputs_3d)
+            loss_ang = torch.tensor(0).to(predicted_3d_pos.device)#angle_loss(predicted_3d_pos, inputs_3d)
             loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
             epoch_loss_3d_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
             epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_ang.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-            loss_total = loss_3d_pos + loss_ang
+            loss_total = loss_3d_pos #+ loss_ang
             if batch_idx % 100 == 0:
                 print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(
                     epoch + 1, batch_idx + 1, train_generator.num_batches, loss_3d_pos.item(), loss_ang.item(), loss_total.item(), epoch_loss_3d_train / N, epoch_loss_angle_train / N))
