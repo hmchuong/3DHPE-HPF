@@ -269,12 +269,12 @@ if not args.evaluate:
     if args.resume:
         epoch = checkpoint['epoch']
         if 'optimizer' in checkpoint and checkpoint['optimizer'] is not None:
-            optimizer.load_state_dict(checkpoint['optimizer'])
+            # optimizer.load_state_dict(checkpoint['optimizer'])
             train_generator.set_random_state(checkpoint['random_state'])
         else:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
 
-        lr = checkpoint['lr']
+        # lr = checkpoint['lr']
 
     # Train generator set random state
     train_generator.set_random_state(np.random.RandomState(1234))
@@ -397,6 +397,9 @@ if not args.evaluate:
                 batch_idx = 0
                 print("Evaluating on train set:")
                 for cam, batch, batch_2d in train_generator_eval.next_epoch():
+                    epoch_loss_3d_train_eval += 0
+                    N += 1
+                    break
                     if batch_2d.shape[1] == 0:
                         # This can only happen when downsampling the dataset
                         continue
@@ -463,7 +466,7 @@ if not args.evaluate:
 
         # Save checkpoint if necessary
         if epoch % args.checkpoint_frequency == 0:
-            chk_path = os.path.join(args.checkpoint, 'epoch_{}.bin'.format(epoch))
+            chk_path = os.path.join(args.checkpoint, '{}_epoch_{}.bin'.format(args.exp, epoch))
             print('Saving checkpoint to', chk_path)
 
             torch.save({
@@ -477,7 +480,7 @@ if not args.evaluate:
             }, chk_path)
 
         #### save best checkpoint
-        best_chk_path = os.path.join(args.checkpoint, 'best_epoch.bin'.format(epoch))
+        best_chk_path = os.path.join(args.checkpoint, '{}_best_epoch.bin'.format(args.exp))
         if losses_3d_valid[-1] * 1000 < min_loss:
             min_loss = losses_3d_valid[-1] * 1000
             print("save best checkpoint")
