@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument('--render', action='store_true', help='visualize a particular video')
     parser.add_argument('--by-subject', action='store_true', help='break down error by subject (on evaluation)')
     parser.add_argument('--export-training-curves', action='store_true', help='save training curves as .png images')
+    parser.add_argument('--exp', type=str, help='name of the experiment')
 
 
     # Model arguments
