@@ -40,6 +40,130 @@ def angle_loss(y, y_gt):
                 loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).mean()
     return loss
 
+
+def angle_loses(predicted, target):
+    """
+    Modified joint position error. 
+    Use this function in run_poseformer.py 
+        after Line 311: loss_ang = angle_loss(predicted_3d_pos, inputs_3d)
+    """
+
+    assert predicted.shape == target.shape
+
+    #print("Predicted shape: ", predicted.shape) #OP: torch.Size([512, 1, 17, 3]) 
+    # Joint space configuration on File: hm36m_dataset.py, Line 247
+
+    '''
+    These are XYZ coordinates relative to the pelvis-joint (X00 = 0, Y00 = 0, Z00 = 0 is the pelvis-joint), 
+        expressed in millimeters (mm).
+    H36M_NAMES[0]  = 'Hip'
+    H36M_NAMES[1]  = 'RHip'
+    H36M_NAMES[2]  = 'RKnee'
+    H36M_NAMES[3]  = 'RFoot'
+    H36M_NAMES[6]  = 'LHip'
+    H36M_NAMES[7]  = 'LKnee'
+    H36M_NAMES[8]  = 'LFoot'
+    H36M_NAMES[12] = 'Spine'
+    H36M_NAMES[13] = 'Thorax'
+    H36M_NAMES[14] = 'Neck/Nose'
+    H36M_NAMES[15] = 'Head'
+    H36M_NAMES[17] = 'LShoulder'
+    H36M_NAMES[18] = 'LElbow'
+    H36M_NAMES[19] = 'LWrist'
+    H36M_NAMES[25] = 'RShoulder'
+    H36M_NAMES[26] = 'RElbow'
+    H36M_NAMES[27] = 'RWrist'
+    '''
+
+    PAPER1 = False
+    PAPER2 = True
+    L=0
+
+    #------------------------------------------------------------------------------------------------------------
+    ''' ---- IN PROGRESS
+    #Paper1: Multi-scale Recalibration with Advanced Geometry Constraints for 3D Human Pose Estimation
+    if(PAPER1):  
+        #Advanced Geometric Constraints:
+        #1. Symmetrical  bone  length ratio constraint
+        Llen1 = 0
+        #2. Symmetrical  bone  length  constraint
+        Llen2=0
+        for i in range(0,N):
+            Llen2 += mod(Si) * 
+        #3. Joint angle orientation constraint: Lower Arm
+        LarmR = max(np.dot(np.cross(vtsr,vsrer), verwr) ,0)
+        #4. Joint angle orientation constraints: Torso
+        Langle1 = max(np.dot(np.cross(vtsr,vsrer), verwr) ,0) + \
+            max(np.dot(np.cross(vslel,vtsl), velwl) ,0) + \
+            max(np.dot(np.cross(vhrkr,vsrer), vkrar) ,0) + \
+            max(np.dot(np.cross(vphl,vhlkl), vkrar) ,0)
+        #5. Joint angle orientation constraints: Torso
+        Langle2 = max(np.dot(vnh,vtp),0) + max(np.dot(vtsr,vtsl),0) + max(np.dot(vphr,vpsl),0) 
+        #Total geometric contraint:
+        #Lgeo = Ldep 
+        L+=Lgeo
+    '''
+
+
+    #-----------------------------------------------------------------------------------------------------------
+    #Paper2: A Joint Relationship A ware Neural Network for Single-Image 3D Human Pose Estimation 
+    if(PAPER2):
+        # Section C. The Local Joint Relationship Awareness 
+
+        #Given Functions as in Paper:
+        """
+        SmoothL1 Smoothness function 
+        input: tensor
+        output: tensor
+        """
+        def SmoothL1(x):
+            #if x<1: x = 0.5x^2
+            indices = torch.abs(x)<1
+            x[indices] = 0.5*x[indices]**2
+
+            #otherwise: x = |x|-0.5
+            x[~indices] = torch.abs(x[~indices])-0.5
+            return x
+
+        """
+        cs Cosine similarity measure
+        params: parent joint, current joint, child joint
+        output: tensor
+        """
+        def cs(p,j,c):
+            Ak = torch.dot(p - j , j - c) / torch.norm(p - j, dim=len(target.shape)-1)*torch.norm(j - c, dim=len(target.shape)-1)
+            return Ak
+
+        # 1. Angle smoothness -- IN PROGRESS
+        '''
+        Joint angle loss merely constrains the angles of the limb joints:
+            shoulders, elbows, hips and knees, i.e., M = 8. 
+        '''
+        '''
+        sum = 0
+        for i in [1,2,3]:
+            xp = predicted[:,:,i,0].reshape(-1)
+            yp = predicted[:,:,i,1].reshape(-1)
+            zp = predicted[:,:,i,2].reshape(-1)
+            xj = predicted[:,:,i,0].reshape(-1)
+            yj = predicted[:,:,i,1].reshape(-1)
+            zj = predicted[:,:,i,2].reshape(-1)
+            xc = predicted[:,:,i,0].reshape(-1)
+            yc = predicted[:,:,i,1].reshape(-1)
+            zc = predicted[:,:,i,2].reshape(-1)
+            sum += cs([xp,yp,zp],[xj,yj,zj],[xc, yc, zc])
+        Langle = SmoothL1(sum)
+        L += Langle
+        '''
+
+        # 2. Joint smoothness --- DONE
+        #predicted = torch.from_numpy(predicted.astype('float32'))
+        Ljoint = SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1))
+        Ljoint = torch.mean(Ljoint)
+        L += Ljoint
+
+    return L
+
 def mpjpe(predicted, target):
     """
     Mean per-joint position error (i.e. mean Euclidean distance),
