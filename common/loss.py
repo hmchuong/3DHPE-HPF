@@ -41,11 +41,11 @@ def angle_loss(y, y_gt):
     return loss
 
 
-def angle_loses(predicted, target):
+def angle_losses(predicted, target):
     """
     Modified joint position error. 
     Use this function in run_poseformer.py 
-        after Line 311: loss_ang = angle_loss(predicted_3d_pos, inputs_3d)
+        after Line 311: loss_ang = angle_lossses(predicted_3d_pos, inputs_3d)
     """
 
     assert predicted.shape == target.shape
