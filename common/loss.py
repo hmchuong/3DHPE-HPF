@@ -56,23 +56,23 @@ def angle_loses(predicted, target):
     '''
     These are XYZ coordinates relative to the pelvis-joint (X00 = 0, Y00 = 0, Z00 = 0 is the pelvis-joint), 
         expressed in millimeters (mm).
-    H36M_NAMES[0]  = 'Hip'
-    H36M_NAMES[1]  = 'RHip'
-    H36M_NAMES[2]  = 'RKnee'
-    H36M_NAMES[3]  = 'RFoot'
-    H36M_NAMES[6]  = 'LHip'
-    H36M_NAMES[7]  = 'LKnee'
-    H36M_NAMES[8]  = 'LFoot'
-    H36M_NAMES[12] = 'Spine'
-    H36M_NAMES[13] = 'Thorax'
-    H36M_NAMES[14] = 'Neck/Nose'
-    H36M_NAMES[15] = 'Head'
-    H36M_NAMES[17] = 'LShoulder'
-    H36M_NAMES[18] = 'LElbow'
-    H36M_NAMES[19] = 'LWrist'
-    H36M_NAMES[25] = 'RShoulder'
-    H36M_NAMES[26] = 'RElbow'
-    H36M_NAMES[27] = 'RWrist'
+    H36M_NAMES[0]  = 'Hip'      0
+    H36M_NAMES[1]  = 'RHip'     1
+    H36M_NAMES[2]  = 'RKnee'    2
+    H36M_NAMES[3]  = 'RFoot'    3
+    H36M_NAMES[6]  = 'LHip'     4
+    H36M_NAMES[7]  = 'LKnee'    5
+    H36M_NAMES[8]  = 'LFoot'    6
+    H36M_NAMES[12] = 'Spine'    7
+    H36M_NAMES[13] = 'Thorax'   8
+    H36M_NAMES[14] = 'Neck/Nose'9
+    H36M_NAMES[15] = 'Head'     10
+    H36M_NAMES[17] = 'LShoulder'11
+    H36M_NAMES[18] = 'LElbow'   12
+    H36M_NAMES[19] = 'LWrist'   13
+    H36M_NAMES[25] = 'RShoulder'14
+    H36M_NAMES[26] = 'RElbow'   15  
+    H36M_NAMES[27] = 'RWrist'   16
     '''
 
     PAPER1 = False
@@ -131,7 +131,7 @@ def angle_loses(predicted, target):
         output: tensor
         """
         def cs(p,j,c):
-            Ak = torch.dot(p - j , j - c) / torch.norm(p - j, dim=len(target.shape)-1)*torch.norm(j - c, dim=len(target.shape)-1)
+            Ak = torch.dot(p - j , j - c) / torch.norm(p - j, dim=len(p.shape)-1)*torch.norm(j - c, dim=len(p.shape)-1)
             return Ak
 
         # 1. Angle smoothness -- IN PROGRESS
@@ -139,22 +139,29 @@ def angle_loses(predicted, target):
         Joint angle loss merely constrains the angles of the limb joints:
             shoulders, elbows, hips and knees, i.e., M = 8. 
         '''
-        '''
-        sum = 0
-        for i in [1,2,3]:
-            xp = predicted[:,:,i,0].reshape(-1)
-            yp = predicted[:,:,i,1].reshape(-1)
-            zp = predicted[:,:,i,2].reshape(-1)
-            xj = predicted[:,:,i,0].reshape(-1)
-            yj = predicted[:,:,i,1].reshape(-1)
-            zj = predicted[:,:,i,2].reshape(-1)
-            xc = predicted[:,:,i,0].reshape(-1)
-            yc = predicted[:,:,i,1].reshape(-1)
-            zc = predicted[:,:,i,2].reshape(-1)
-            sum += cs([xp,yp,zp],[xj,yj,zj],[xc, yc, zc])
-        Langle = SmoothL1(sum)
-        L += Langle
-        '''
+        def Acs(data):
+            # Relative position wrt Hip
+            data = data[:,:,:,:]-data[:,:,0,:]
+
+            #J: Shoudlers, Elbows, Hips, Knees - L,R
+            #P: Thorax, Shoulders, Hip, Hips - L,R
+            #C: Elbows, Wrists, Knees, Foot - L,R
+            j=[11, 12, 4, 5, 14, 15, 1, 2]
+            p=[8, 11, 0, 4, 8, 14, 0, 1]
+            c=[12, 13, 5, 6, 12, 16, 2, 3]
+            sum = 0
+            for i1,i2,i3 in zip(j,p,c):
+                for pb,jb,cb in zip(data[:,:,i1,:],data[:,:,i2,:],data[:,:,i3,:]):
+                    for pi,ji,ci in zip(pb,jb,cb):
+                        sum += cs(pi,ji,ci)
+            return sum
+
+        A = Acs(predicted)
+        Ak = Acs(target)
+        Langle = SmoothL1(A-Ak)
+        LAMBDA = 0.1
+        L += LAMBDA*Langle
+        
 
         # 2. Joint smoothness --- DONE
         #predicted = torch.from_numpy(predicted.astype('float32'))
