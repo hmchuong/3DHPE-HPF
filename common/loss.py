@@ -45,7 +45,7 @@ def angle_losses(predicted, target):
     """
     Modified joint position error. 
     Use this function in run_poseformer.py 
-        after Line 311: loss_ang = angle_lossses(predicted_3d_pos, inputs_3d)
+        after Line 311: loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
     """
 
     assert predicted.shape == target.shape
@@ -80,16 +80,36 @@ def angle_losses(predicted, target):
     L=0
 
     #------------------------------------------------------------------------------------------------------------
-    ''' ---- IN PROGRESS
+    '''
+    # ---- IN PROGRESS
     #Paper1: Multi-scale Recalibration with Advanced Geometry Constraints for 3D Human Pose Estimation
     if(PAPER1):  
         #Advanced Geometric Constraints:
         #1. Symmetrical  bone  length ratio constraint
+            #Ri is a set of bones which follow a fixed ratio,
+            #ri is the  average  ratio  of  bone  length
+        
+        #4 groups of bones:
+        #Rarm = {left/right lower/upper arms}, 
+        #Rleg = { left/right lower/upper legs},
+        #Rshoulder = { left/right shoulder bones}, 
+        #Rhip = {left/right hip bones}
+        
         Llen1 = 0
+        Ri = {}
+        #Ratio of lengths  = []
+        r=[]
+
+        #l length of bone
+        #le canonical skeleton bone length
+        for i in Ri:
+            for e in e[Ri]:
+                Llen1 += (l[e]/l_[e] - r[i])**2
+    
         #2. Symmetrical  bone  length  constraint
         Llen2=0
         for i in range(0,N):
-            Llen2 += mod(Si) * 
+            Llen2 += abs(Si) * 
         #3. Joint angle orientation constraint: Lower Arm
         LarmR = max(np.dot(np.cross(vtsr,vsrer), verwr) ,0)
         #4. Joint angle orientation constraints: Torso
@@ -131,34 +151,36 @@ def angle_losses(predicted, target):
         output: tensor
         """
         def cs(p,j,c):
-            Ak = torch.dot(p - j , j - c) / torch.norm(p - j, dim=len(p.shape)-1)*torch.norm(j - c, dim=len(p.shape)-1)
+            u = p - j
+            v = j - c
+            uv= u*v #u.v
+            Ak = torch.sum(uv,dim=-1) / (torch.norm(u, dim=-1)*torch.norm(v, dim=-1))
+            indices = torch.isnan(Ak)
+            Ak[indices] = 0
             return Ak
-
+        
         # 1. Angle smoothness -- IN PROGRESS
         '''
         Joint angle loss merely constrains the angles of the limb joints:
             shoulders, elbows, hips and knees, i.e., M = 8. 
         '''
-        def Acs(data):
+        def Acs(datad):
             # Relative position wrt Hip
-            data = data[:,:,:,:]-data[:,:,0,:]
-
+            data = datad.detach()
+            data = data-data[-1,0,:]
             #J: Shoudlers, Elbows, Hips, Knees - L,R
             #P: Thorax, Shoulders, Hip, Hips - L,R
             #C: Elbows, Wrists, Knees, Foot - L,R
             j=[11, 12, 4, 5, 14, 15, 1, 2]
             p=[8, 11, 0, 4, 8, 14, 0, 1]
             c=[12, 13, 5, 6, 12, 16, 2, 3]
-            sum = 0
-            for i1,i2,i3 in zip(j,p,c):
-                for pb,jb,cb in zip(data[:,:,i1,:],data[:,:,i2,:],data[:,:,i3,:]):
-                    for pi,ji,ci in zip(pb,jb,cb):
-                        sum += cs(pi,ji,ci)
-            return sum
-
-        A = Acs(predicted)
+            return cs(data[:,:,p,:],data[:,:,j,:],data[:,:,c,:])
+        
+        A = Acs(predicted) #A shape [512,1,8]
         Ak = Acs(target)
-        Langle = SmoothL1(A-Ak)
+        Langle = SmoothL1(torch.sum((A-Ak).reshape(-1)))
+        Langle = torch.mean(Langle)
+        #print("Langle: ", Langle)
         LAMBDA = 0.1
         L += LAMBDA*Langle
         
@@ -167,6 +189,7 @@ def angle_losses(predicted, target):
         #predicted = torch.from_numpy(predicted.astype('float32'))
         Ljoint = SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1))
         Ljoint = torch.mean(Ljoint)
+        #print("Ljoint: ",Ljoint)
         L += Ljoint
 
     return L
