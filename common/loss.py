@@ -13,7 +13,7 @@ def angle_losses(predicted, target):
     """
     Modified joint position error. 
     Use this function in run_poseformer.py 
-        after Line 311: loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
+        after Line 311: loss_ang = angle_loss(predicted_3d_pos, inputs_3d)
     """
 
     assert predicted.shape == target.shape
@@ -43,15 +43,15 @@ def angle_losses(predicted, target):
     H36M_NAMES[27] = 'RWrist'   16
     '''
 
-    PAPER1 = False
+    PAPER1 = True
     PAPER2 = True
     L=0
 
     #------------------------------------------------------------------------------------------------------------
-    '''
     # ---- IN PROGRESS
     #Paper1: Multi-scale Recalibration with Advanced Geometry Constraints for 3D Human Pose Estimation
     if(PAPER1):  
+        '''
         #Advanced Geometric Constraints:
         #1. Symmetrical  bone  length ratio constraint
             #Ri is a set of bones which follow a fixed ratio,
@@ -78,20 +78,50 @@ def angle_losses(predicted, target):
         Llen2=0
         for i in range(0,N):
             Llen2 += abs(Si) * 
-        #3. Joint angle orientation constraint: Lower Arm
-        LarmR = max(np.dot(np.cross(vtsr,vsrer), verwr) ,0)
-        #4. Joint angle orientation constraints: Torso
-        Langle1 = max(np.dot(np.cross(vtsr,vsrer), verwr) ,0) + \
-            max(np.dot(np.cross(vslel,vtsl), velwl) ,0) + \
-            max(np.dot(np.cross(vhrkr,vsrer), vkrar) ,0) + \
-            max(np.dot(np.cross(vphl,vhlkl), vkrar) ,0)
-        #5. Joint angle orientation constraints: Torso
-        Langle2 = max(np.dot(vnh,vtp),0) + max(np.dot(vtsr,vtsl),0) + max(np.dot(vphr,vpsl),0) 
-        #Total geometric contraint:
-        #Lgeo = Ldep 
-        L+=Lgeo
-    '''
+        
+        '''
+        # Relative position wrt Hip
+        data = predicted.detach()
+        data = data-data[-1,0,:]
+        def max(a,b):
+            indices = a<b
+            a[indices] = b
+            return a
 
+        #3. Joint angle orientation constraint: Lower Arm
+        vtsr = data[:,:,14,:] - data[:,:,8,:] #RShoulder - Thorax
+        vsrer = data[:,:,15,:] - data[:,:,14,:] #RElbow - RShoulder
+        verwr = data[:,:,16,:] - data[:,:,15,:] #RWrist - RElbow
+        LarmR = max(torch.cross(vtsr,vsrer,dim=-1) * verwr,0)
+        LarmR = torch.mean(LarmR)
+        #print("LarmR: ",LarmR)
+        L+=LarmR
+        
+        #4. Joint angle orientation constraints: Torso
+        vslel = data[:,:,12,:] - data[:,:,11,:]#LElbow - Lshoulder
+        vtsl =   data[:,:,11,:] - data[:,:,8,:] #LShoulder - Thorax
+        velwl =  data[:,:,13,:] - data[:,:,12,:] #LWrist - LElbow
+        vhrkr = data[:,:,2,:] - data[:,:,1,:] #RKnee - RHip
+        vkrar = data[:,:,14,:] - data[:,:,8,:] #RAnkle - RKnee
+        vphl = data[:,:,4,:] - data[:,:,0,:] #LHip - Hip
+        vhlkl = data[:,:,5,:] - data[:,:,4,:] #LKnee - LHip
+        Langle1 = max(torch.cross(vtsr,vsrer) * verwr ,0) + \
+            max(torch.cross(vslel,vtsl)* velwl,0) + \
+            max(torch.cross(vhrkr,vsrer)* vkrar ,0) + \
+            max(torch.cross(vphl,vhlkl)* vkrar ,0)
+        Langle1 = torch.mean(Langle1)
+        #print("Langle1: ",Langle1)
+        L+=Langle1
+
+        #5. Joint angle orientation constraints: Torso
+        vnh = data[:,:,10,:] - data[:,:,9,:] #Head - Neck
+        vtp = data[:,:,0,:] - data[:,:,8,:] #Hip - Thorax
+        vphr = data[:,:,1,:] - data[:,:,0,:] #RHip - Hip
+        Langle2 = max(vnh*vtp,0) + max(vtsr*vtsl,0) + max(vphr*vphl,0) 
+        Langle2 = torch.mean(Langle2)
+        #print("Langle2: ",Langle2)
+        L+=Langle2
+        
 
     #-----------------------------------------------------------------------------------------------------------
     #Paper2: A Joint Relationship A ware Neural Network for Single-Image 3D Human Pose Estimation 
