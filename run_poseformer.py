@@ -31,10 +31,11 @@ from common.generators import ChunkedGenerator, UnchunkedGenerator
 from time import time
 from common.utils import *
 
+torch.manual_seed(2021)
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
 # print(torch.cuda.device_count())
 
 
@@ -247,6 +248,7 @@ if not args.evaluate:
 
     lr = args.learning_rate
     optimizer = optim.AdamW(model_pos_train.parameters(), lr=lr, weight_decay=0.1)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=args.lr_decay)
 
     lr_decay = args.lr_decay
     losses_3d_train = []
@@ -268,13 +270,15 @@ if not args.evaluate:
     if args.resume:
         epoch = checkpoint['epoch']
         if 'optimizer' in checkpoint and checkpoint['optimizer'] is not None:
-            optimizer.load_state_dict(checkpoint['optimizer'])
+            # optimizer.load_state_dict(checkpoint['optimizer'])
             train_generator.set_random_state(checkpoint['random_state'])
         else:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
 
-        lr = checkpoint['lr']
+        # lr = checkpoint['lr']
 
+    # Train generator set random state
+    train_generator.set_random_state(np.random.RandomState(1234))
 
     print('** Note: reported losses are averaged over all frames.')
     print('** The final evaluation will be carried out after the last training epoch.')
@@ -298,7 +302,7 @@ if not args.evaluate:
             if torch.cuda.is_available():
                 inputs_3d = inputs_3d.cuda()
                 inputs_2d = inputs_2d.cuda()
-                cameras_train = cameras_train.cuda()
+                # cameras_train = cameras_train.cuda()
             inputs_traj = inputs_3d[:, :, :1].clone()
             inputs_3d[:, :, 0] = 0
 
@@ -306,18 +310,17 @@ if not args.evaluate:
 
             # Predict 3D poses
             predicted_3d_pos = model_pos_train(inputs_2d)
-            # del inputs_2d
-            # torch.cuda.empty_cache()
-            loss_ang = angle_loss(predicted_3d_pos, inputs_3d)
-            loss_angs = angle_losses(predicted_3d_pos, inputs_3d)
+            del inputs_2d
+            torch.cuda.empty_cache()
+            loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
             loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
             epoch_loss_3d_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
             epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_ang.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-            loss_total = loss_3d_pos + loss_ang + loss_angs
+            loss_total = loss_3d_pos + loss_ang
             if batch_idx % 100 == 0:
-                print("Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(
+                print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(
                     epoch + 1, batch_idx + 1, train_generator.num_batches, loss_3d_pos.item(), loss_ang.item(), loss_total.item(), epoch_loss_3d_train / N, epoch_loss_angle_train / N))
 
             loss_total.backward()
@@ -341,7 +344,9 @@ if not args.evaluate:
             N = 0
             if not args.no_eval:
                 print("Evaluating ...")
+                print("Evaluating on test set:")
                 # Evaluate on test set
+                batch_idx = 0
                 for cam, batch, batch_2d in test_generator.next_epoch():
                     inputs_3d = torch.from_numpy(batch.astype('float32'))
                     inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
@@ -371,13 +376,16 @@ if not args.evaluate:
                                                   keepdim=True)
 
                     del inputs_2d, inputs_2d_flip
-                    torch.cuda.empty_cache()
 
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_valid += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
                     del inputs_3d, loss_3d_pos, predicted_3d_pos
+                    if batch_idx % 20 == 0:
+                        print("Evaluation: Epoch {} - Batch {}".format(
+                            epoch + 1, batch_idx + 1))
+                    batch_idx += 1
                     torch.cuda.empty_cache()
 
                 losses_3d_valid.append(epoch_loss_3d_valid / N)
@@ -387,7 +395,12 @@ if not args.evaluate:
                 epoch_loss_traj_train_eval = 0
                 epoch_loss_2d_train_labeled_eval = 0
                 N = 0
+                batch_idx = 0
+                print("Evaluating on train set:")
                 for cam, batch, batch_2d in train_generator_eval.next_epoch():
+                    # epoch_loss_3d_train_eval += 0
+                    # N += 1
+                    # break
                     if batch_2d.shape[1] == 0:
                         # This can only happen when downsampling the dataset
                         continue
@@ -406,13 +419,16 @@ if not args.evaluate:
                     predicted_3d_pos = model_pos(inputs_2d)
 
                     del inputs_2d
-                    torch.cuda.empty_cache()
 
                     loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
                     epoch_loss_3d_train_eval += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
                     N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
                     del inputs_3d, loss_3d_pos, predicted_3d_pos
+                    if batch_idx % 20 == 0:
+                        print("Evaluation: Epoch {} - Batch {}".format(
+                            epoch + 1, batch_idx + 1))
+                    batch_idx += 1
                     torch.cuda.empty_cache()
 
                 losses_3d_train_eval.append(epoch_loss_3d_train_eval / N)
@@ -440,9 +456,11 @@ if not args.evaluate:
                 losses_3d_valid[-1] * 1000))
 
         # Decay learning rate exponentially
-        lr *= lr_decay
-        for param_group in optimizer.param_groups:
-            param_group['lr'] *= lr_decay
+        # lr *= lr_decay
+        # for param_group in optimizer.param_groups:
+        #     param_group['lr'] *= lr_decay
+        lr = optimizer.param_groups[0]['lr']
+        scheduler.step()
         epoch += 1
 
         # Decay BatchNorm momentum
@@ -451,7 +469,7 @@ if not args.evaluate:
 
         # Save checkpoint if necessary
         if epoch % args.checkpoint_frequency == 0:
-            chk_path = os.path.join(args.checkpoint, 'epoch_{}.bin'.format(epoch))
+            chk_path = os.path.join(args.checkpoint, '{}_epoch_{}.bin'.format(args.exp, epoch))
             print('Saving checkpoint to', chk_path)
 
             torch.save({
@@ -465,7 +483,7 @@ if not args.evaluate:
             }, chk_path)
 
         #### save best checkpoint
-        best_chk_path = os.path.join(args.checkpoint, 'best_epoch.bin'.format(epoch))
+        best_chk_path = os.path.join(args.checkpoint, '{}_best_epoch.bin'.format(args.exp))
         if losses_3d_valid[-1] * 1000 < min_loss:
             min_loss = losses_3d_valid[-1] * 1000
             print("save best checkpoint")
