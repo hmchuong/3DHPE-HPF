@@ -176,7 +176,7 @@ def angle_losses(predicted, target):
         
         A = Acs(predicted) #A shape [512,1,8]
         Ak = Acs(target)
-        Langle = SmoothL1(torch.sum((A-Ak).reshape(-1)))
+        Langle = SmoothL1(torch.sum(A-Ak,dim=-1))
         Langle = torch.mean(Langle)
         #print("Langle: ", Langle)
         LAMBDA = 0.1
