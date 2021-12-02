@@ -248,6 +248,8 @@ if not args.evaluate:
 
     lr = args.learning_rate
     optimizer = optim.AdamW(model_pos_train.parameters(), lr=lr, weight_decay=0.1)
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=args.lr_decay)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, cooldown=1, verbose=True, min_lr=1e-8, factor=args.lr_decay)
 
     lr_decay = args.lr_decay
     losses_3d_train = []
@@ -269,12 +271,12 @@ if not args.evaluate:
     if args.resume:
         epoch = checkpoint['epoch']
         if 'optimizer' in checkpoint and checkpoint['optimizer'] is not None:
-            # optimizer.load_state_dict(checkpoint['optimizer'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
             train_generator.set_random_state(checkpoint['random_state'])
         else:
             print('WARNING: this checkpoint does not contain an optimizer state. The optimizer will be reinitialized.')
 
-        # lr = checkpoint['lr']
+        lr = checkpoint['lr']
 
     # Train generator set random state
     train_generator.set_random_state(np.random.RandomState(1234))
@@ -311,13 +313,17 @@ if not args.evaluate:
             predicted_3d_pos = model_pos_train(inputs_2d)
             # del inputs_2d
             # torch.cuda.empty_cache()
-            loss_ang = torch.tensor(0).to(predicted_3d_pos.device)#angle_loss(predicted_3d_pos, inputs_3d)
+            # loss_ang = torch.tensor(0).to(predicted_3d_pos.device)
+            # loss_ang = angle_loss(predicted_3d_pos, inputs_3d)
+            loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
             loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+            # loss_3d_pos = torch.tensor(0).to(predicted_3d_pos.device)
             epoch_loss_3d_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
             epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_ang.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-            loss_total = loss_3d_pos #+ loss_ang
+            loss_total = loss_3d_pos + loss_ang
+            # loss_total = loss_ang
             if batch_idx % 100 == 0:
                 print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(
                     epoch + 1, batch_idx + 1, train_generator.num_batches, loss_3d_pos.item(), loss_ang.item(), loss_total.item(), epoch_loss_3d_train / N, epoch_loss_angle_train / N))
@@ -455,9 +461,11 @@ if not args.evaluate:
                 losses_3d_valid[-1] * 1000))
 
         # Decay learning rate exponentially
-        lr *= lr_decay
-        for param_group in optimizer.param_groups:
-            param_group['lr'] *= lr_decay
+        # lr *= lr_decay
+        # for param_group in optimizer.param_groups:
+        #     param_group['lr'] *= lr_decay
+        lr = optimizer.param_groups[0]['lr']
+        scheduler.step(losses_3d_valid[-1])
         epoch += 1
 
         # Decay BatchNorm momentum
@@ -495,7 +503,7 @@ if not args.evaluate:
             }, best_chk_path)
 
         # Save training curves after every epoch, as .png images (if requested)
-        if args.export_training_curves and epoch > 3:
+        if args.export_training_curves and epoch > 1:
             if 'matplotlib' not in sys.modules:
                 import matplotlib
 

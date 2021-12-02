@@ -122,12 +122,12 @@ class PoseTransformer(nn.Module):
         ### spatial patch embedding
         self.Spatial_patch_to_embedding = nn.Linear(in_chans, embed_dim_ratio)
         # self.Spatial_pos_embed = nn.Parameter(torch.zeros(1, num_joints, embed_dim_ratio))
-        # self.Spatial_pos_embed = nn.Parameter(torch.from_numpy(positional_encoding(num_joints, embed_dim_ratio)).unsqueeze(0))
-        self.Spatial_pos_embed = torch.from_numpy(positional_encoding(num_joints, embed_dim_ratio)).unsqueeze(0)
+        self.Spatial_pos_embed = nn.Parameter(torch.from_numpy(positional_encoding(num_joints, embed_dim_ratio)).unsqueeze(0))
+        # self.Spatial_pos_embed = torch.from_numpy(positional_encoding(num_joints, embed_dim_ratio)).unsqueeze(0).cuda()
 
         # self.Temporal_pos_embed = nn.Parameter(torch.zeros(1, num_frame, embed_dim))
-        # self.Temporal_pos_embed = nn.Parameter(torch.from_numpy(positional_encoding(num_frame, embed_dim)).unsqueeze(0))
-        self.Temporal_pos_embed = torch.from_numpy(positional_encoding(num_frame, embed_dim)).unsqueeze(0)
+        self.Temporal_pos_embed = nn.Parameter(torch.from_numpy(positional_encoding(num_frame, embed_dim)).unsqueeze(0))
+        # self.Temporal_pos_embed = torch.from_numpy(positional_encoding(num_frame, embed_dim)).unsqueeze(0).cuda()
         self.pos_drop = nn.Dropout(p=drop_rate)
 
 
@@ -167,7 +167,7 @@ class PoseTransformer(nn.Module):
         x = rearrange(x, 'b c f p  -> (b f) p  c', )
 
         x = self.Spatial_patch_to_embedding(x)
-        x += self.Spatial_pos_embed.to(x.device)
+        x += self.Spatial_pos_embed
         if not self.use_vertice_masking:
             x = self.pos_drop(x)
 
@@ -180,7 +180,7 @@ class PoseTransformer(nn.Module):
 
     def forward_features(self, x):
         b  = x.shape[0]
-        x += self.Temporal_pos_embed.to(x.device)
+        x += self.Temporal_pos_embed
         if not self.use_pose_masking:
             x = self.pos_drop(x)
         for blk in self.blocks:
