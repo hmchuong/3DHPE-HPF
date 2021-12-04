@@ -234,9 +234,11 @@ class Human36mDataset(MocapDataset):
         data = np.load(path, allow_pickle=True)['positions_3d'].item()
         
         self._data = {}
+        chosen_actions = ['Photo', 'SittingDown', 'WalkDog']
         for subject, actions in data.items():
             self._data[subject] = {}
             for action_name, positions in actions.items():
+                if not action_name.split(' ')[0] in chosen_actions: continue
                 self._data[subject][action_name] = {
                     'positions': positions,
                     'cameras': self._cameras[subject],

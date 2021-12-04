@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 #
 import pickle
+from time import time
 import torch
 import numpy as np
 from .valid_angle_check import h36m_valid_angle_check_torch
@@ -43,7 +44,7 @@ def angle_losses(predicted, target):
     H36M_NAMES[27] = 'RWrist'   16
     '''
 
-    PAPER1 = True
+    PAPER1 = False
     PAPER2 = True
     L=0
 
@@ -79,19 +80,16 @@ def angle_losses(predicted, target):
             Llen2 += abs(Si) * 
         
         '''
+        debug_time = time()
         # Relative position wrt Hip
-        data = predicted.detach()
+        data = predicted
         data = data-data[-1,0,:]
-        def max(a,b):
-            indices = a<b
-            a[indices] = b
-            return a
 
         #3. Joint angle orientation constraint: Lower Arm
         vtsr = data[:,:,14,:] - data[:,:,8,:] #RShoulder - Thorax
         vsrer = data[:,:,15,:] - data[:,:,14,:] #RElbow - RShoulder
         verwr = data[:,:,16,:] - data[:,:,15,:] #RWrist - RElbow
-        LarmR = max(torch.cross(vtsr,vsrer,dim=-1) * verwr,0)
+        LarmR = torch.clamp(torch.cross(vtsr,vsrer,dim=-1) * verwr, min=0)
         LarmR = torch.mean(LarmR)
         #print("LarmR: ",LarmR)
         L+=LarmR
@@ -104,10 +102,10 @@ def angle_losses(predicted, target):
         vkrar = data[:,:,14,:] - data[:,:,8,:] #RAnkle - RKnee
         vphl = data[:,:,4,:] - data[:,:,0,:] #LHip - Hip
         vhlkl = data[:,:,5,:] - data[:,:,4,:] #LKnee - LHip
-        Langle1 = max(torch.cross(vtsr,vsrer) * verwr ,0) + \
-            max(torch.cross(vslel,vtsl)* velwl,0) + \
-            max(torch.cross(vhrkr,vsrer)* vkrar ,0) + \
-            max(torch.cross(vphl,vhlkl)* vkrar ,0)
+        Langle1 = torch.clamp(torch.cross(vtsr,vsrer) * verwr, min=0) + \
+            torch.clamp(torch.cross(vslel,vtsl)* velwl, min=0) + \
+            torch.clamp(torch.cross(vhrkr,vsrer)* vkrar, min=0) + \
+            torch.clamp(torch.cross(vphl,vhlkl)* vkrar, min=0)
         Langle1 = torch.mean(Langle1)
         #print("Langle1: ",Langle1)
         L+=Langle1
@@ -116,15 +114,16 @@ def angle_losses(predicted, target):
         vnh = data[:,:,10,:] - data[:,:,9,:] #Head - Neck
         vtp = data[:,:,0,:] - data[:,:,8,:] #Hip - Thorax
         vphr = data[:,:,1,:] - data[:,:,0,:] #RHip - Hip
-        Langle2 = max(vnh*vtp,0) + max(vtsr*vtsl,0) + max(vphr*vphl,0) 
+        Langle2 = torch.clamp(vnh*vtp, min=0) + torch.clamp(vtsr*vtsl, min=0) + torch.clamp(vphr*vphl, min=0) 
         Langle2 = torch.mean(Langle2)
         #print("Langle2: ",Langle2)
         L+=Langle2
-        
+        # print("Angle loss 1", time() - debug_time)
 
     #-----------------------------------------------------------------------------------------------------------
     #Paper2: A Joint Relationship A ware Neural Network for Single-Image 3D Human Pose Estimation 
     if(PAPER2):
+        debug_time = time()
         # Section C. The Local Joint Relationship Awareness 
 
         #Given Functions as in Paper:
@@ -133,14 +132,6 @@ def angle_losses(predicted, target):
         input: tensor
         output: tensor
         """
-        def SmoothL1(x):
-            #if x<1: x = 0.5x^2
-            indices = torch.abs(x)<1
-            x[indices] = 0.5*x[indices]**2
-
-            #otherwise: x = |x|-0.5
-            x[~indices] = torch.abs(x[~indices])-0.5
-            return x
 
         """
         cs Cosine similarity measure
@@ -163,35 +154,50 @@ def angle_losses(predicted, target):
         '''
         def Acs(datad):
             # Relative position wrt Hip
-            data = datad.detach()
-            data = data-data[-1,0,:]
+            data = datad.clone()
+            # import pdb; pdb.set_trace()
+            data = data-data[:,:, 0, :]
             #J: Shoudlers, Elbows, Hips, Knees - L,R
             #P: Thorax, Shoulders, Hip, Hips - L,R
             #C: Elbows, Wrists, Knees, Foot - L,R
             j=[11, 12, 4, 5, 14, 15, 1, 2]
             p=[8, 11, 0, 4, 8, 14, 0, 1]
             c=[12, 13, 5, 6, 12, 16, 2, 3]
+            # j = [1, 2, 4, 5, 7, 7, 7, 8, 9, 11, 12, 14, 15]
+            # p = [0, 1, 0, 4, 0, 0, 0, 7, 8, 8, 11, 8, 14]
+            # c = [2, 3, 5, 6, 8, 11, 14, 9, 10, 12, 13, 15, 16]
             return cs(data[:,:,p,:],data[:,:,j,:],data[:,:,c,:])
         
+        # debug_time = time()
         A = Acs(predicted) #A shape [512,1,8]
+        # print("cosine time", time() - debug_time)
         Ak = Acs(target)
         Langle = SmoothL1(torch.sum(A-Ak,dim=-1))
         Langle = torch.mean(Langle)
-        #print("Langle: ", Langle)
-        LAMBDA = 0.1
-        L += LAMBDA*Langle
+        # print("Langle: ", Langle)
+        L += Langle
         
 
         # 2. Joint smoothness --- DONE
         #predicted = torch.from_numpy(predicted.astype('float32'))
-        Ljoint = SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1))
-        Ljoint = torch.mean(Ljoint)
-        #print("Ljoint: ",Ljoint)
-        L += Ljoint
-
+        # Ljoint = SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1))
+        # Ljoint = torch.mean(Ljoint)
+        # print("Ljoint: ",Ljoint)
+        # L += Ljoint
+        # print("Angle loss 2", time() - debug_time)
     return L
 
-valid_ang = pickle.load(open('./data/h36m_valid_angle.p', "rb"))
+def SmoothL1(x):
+    x = x.clone()
+    #if x<1: x = 0.5x^2
+    indices = torch.abs(x)<1
+    x[indices] = 0.5*x[indices]**2
+
+    #otherwise: x = |x|-0.5
+    x[~indices] = torch.abs(x[~indices])-0.5
+    return x
+
+valid_ang = pickle.load(open('./data/h36m_valid_angle_0212.p', "rb"))
 def angle_loss(y, y_gt):
     ang_names = list(valid_ang.keys())
     y = y.reshape([-1, 17, 3])
@@ -202,29 +208,26 @@ def angle_loss(y, y_gt):
     N = 1
     for an in ang_names:
         valid = torch.ones_like(ang_cos[an])
-        if an != "Spine2HipPlane":
-            lower_bound = valid_ang[an][0]
-            if lower_bound >= -0.98:
-                # loss += torch.exp(-b * (ang_cos[an] - lower_bound)).mean()
-                if torch.any(ang_cos[an] < lower_bound):
-                    # loss += b * torch.exp(-(ang_cos[an][ang_cos[an] < lower_bound] - lower_bound)).mean()
-                    loss += (ang_cos[an][ang_cos[an] < lower_bound] - lower_bound).pow(2).sum()
-                    N += ang_cos[an][ang_cos[an] < lower_bound].shape[0]
-                    valid[ang_cos[an] < lower_bound] = 0
-            upper_bound = valid_ang[an][1]
-            if upper_bound <= 0.98:
-                # loss += torch.exp(b * (ang_cos[an] - upper_bound)).mean()
-                if torch.any(ang_cos[an] > upper_bound):
-                    # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
-                    loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).sum()
-                    valid[ang_cos[an] > upper_bound] = 0
-                    N += ang_cos[an][ang_cos[an] > upper_bound].shape[0]
-        if not an in ["Spine2HipPlane1", "Spine2HipPlane2"]:
-            if torch.any(valid > 0):
-                loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).sum()
-                N += ang_cos[an][valid > 0].shape[0]
+        lower_bound = valid_ang[an][0].min().item()
+        if lower_bound >= -0.98:
+            # loss += torch.exp(-b * (ang_cos[an] - lower_bound)).mean()
+            if torch.any(ang_cos[an] < lower_bound):
+                # loss += b * torch.exp(-(ang_cos[an][ang_cos[an] < lower_bound] - lower_bound)).mean()
+                loss += (ang_cos[an][ang_cos[an] < lower_bound] - lower_bound).pow(2).sum()
+                N += ang_cos[an][ang_cos[an] < lower_bound].shape[0]
+                valid[ang_cos[an] < lower_bound] = 0
+        upper_bound = valid_ang[an][1].max().item()
+        if upper_bound <= 0.98:
+            # loss += torch.exp(b * (ang_cos[an] - upper_bound)).mean()
+            if torch.any(ang_cos[an] > upper_bound):
+                # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
+                loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).sum()
+                valid[ang_cos[an] > upper_bound] = 0
+                N += ang_cos[an][ang_cos[an] > upper_bound].shape[0]
+        # if torch.any(valid > 0):
+        #     loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).sum()
+        #     N += ang_cos[an][valid > 0].shape[0]
     loss = loss/N
-    # import pdb; pdb.set_trace()
     return loss
 
 def mpjpe(predicted, target):
@@ -234,6 +237,14 @@ def mpjpe(predicted, target):
     """
     assert predicted.shape == target.shape
     return torch.mean(torch.norm(predicted - target, dim=len(target.shape)-1))
+
+def smooth_mpjpe(predicted, target):
+    """
+    Mean per-joint position error (i.e. mean Euclidean distance),
+    often referred to as "Protocol #1" in many papers.
+    """
+    assert predicted.shape == target.shape
+    return torch.mean(SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1)))
     
 def weighted_mpjpe(predicted, target, w):
     """

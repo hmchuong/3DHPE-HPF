@@ -68,7 +68,7 @@ print('Preparing data...')
 for subject in dataset.subjects():
     for action in dataset[subject].keys():
         anim = dataset[subject][action]
-
+        
         if 'positions' in anim:
             positions_3d = []
             for cam in anim['cameras']:
@@ -127,6 +127,7 @@ def fetch(subjects, action_filter=None, subset=1, parse_3d_poses=True):
     out_camera_params = []
     for subject in subjects:
         for action in keypoints[subject].keys():
+            if not action in dataset[subject]: continue
             if action_filter is not None:
                 found = False
                 for a in action_filter:
@@ -249,7 +250,7 @@ if not args.evaluate:
     lr = args.learning_rate
     optimizer = optim.AdamW(model_pos_train.parameters(), lr=lr, weight_decay=0.1)
     # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=args.lr_decay)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=2, cooldown=1, verbose=True, min_lr=1e-8, factor=args.lr_decay)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=2, cooldown=1, verbose=True, min_lr=1e-8, factor=args.lr_decay)
 
     lr_decay = args.lr_decay
     losses_3d_train = []
@@ -295,6 +296,7 @@ if not args.evaluate:
         N_semi = 0
         model_pos_train.train()
         batch_idx = 0
+        debug_time = time()
         for cameras_train, batch_3d, batch_2d in train_generator.next_epoch():
             cameras_train = torch.from_numpy(cameras_train.astype('float32'))
             inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
@@ -306,34 +308,55 @@ if not args.evaluate:
                 cameras_train = cameras_train.cuda()
             inputs_traj = inputs_3d[:, :, :1].clone()
             inputs_3d[:, :, 0] = 0
-
+            
+            # print("Data loading time", time() - debug_time)
+            debug_time = time()
+            
             optimizer.zero_grad()
 
             # Predict 3D poses
             predicted_3d_pos = model_pos_train(inputs_2d)
             # del inputs_2d
             # torch.cuda.empty_cache()
-            # loss_ang = torch.tensor(0).to(predicted_3d_pos.device)
+            loss_ang = torch.tensor(0).to(predicted_3d_pos.device)
             # loss_ang = angle_loss(predicted_3d_pos, inputs_3d)
-            loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
+            
+            # print("Forward time", time() - debug_time)
+            debug_time = time()
+
+            # loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
+            # print("angle time", time() - debug_time)
+            debug_time = time()
             loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+
+            # print("mpjpe time", time() - debug_time)
+            debug_time = time()
+
             # loss_3d_pos = torch.tensor(0).to(predicted_3d_pos.device)
             epoch_loss_3d_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
             epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_ang.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-            loss_total = loss_3d_pos + loss_ang
+            loss_total = loss_3d_pos #+ 0.1 * loss_ang
             # loss_total = loss_ang
             if batch_idx % 100 == 0:
                 print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(
                     epoch + 1, batch_idx + 1, train_generator.num_batches, loss_3d_pos.item(), loss_ang.item(), loss_total.item(), epoch_loss_3d_train / N, epoch_loss_angle_train / N))
 
+            
             loss_total.backward()
+            # print("backward time", time() - debug_time)
+            debug_time = time()
 
             optimizer.step()
+
+            # print("optimization time", time() - debug_time)
+            debug_time = time()
+
             # del inputs_3d, loss_3d_pos, predicted_3d_pos
             # torch.cuda.empty_cache()
             batch_idx += 1
+            debug_time = time()
 
         losses_3d_train.append(epoch_loss_3d_train / N)
         torch.cuda.empty_cache()
@@ -482,6 +505,7 @@ if not args.evaluate:
                 'lr': lr,
                 'random_state': train_generator.random_state(),
                 'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
                 'model_pos': model_pos_train.state_dict(),
                 # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                 # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
@@ -497,6 +521,7 @@ if not args.evaluate:
                 'lr': lr,
                 'random_state': train_generator.random_state(),
                 'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
                 'model_pos': model_pos_train.state_dict(),
                 # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                 # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
@@ -536,6 +561,7 @@ def evaluate(test_generator, action=None, return_predictions=False, use_trajecto
         # else:
             # model_traj.eval()
         N = 0
+        
         for _, batch, batch_2d in test_generator.next_epoch():
             inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
             inputs_3d = torch.from_numpy(batch.astype('float32'))
