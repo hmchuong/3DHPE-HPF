@@ -475,13 +475,16 @@ if not args.evaluate:
                 losses_3d_train[-1] * 1000))
         else:
 
-            print('[%d] time %.2f lr %f 3d_train %f 3d_eval %f 3d_valid %f' % (
+            log_str = '[%d] time %.2f lr %f 3d_train %f 3d_eval %f 3d_valid %f' % (
                 epoch + 1,
                 elapsed,
                 lr,
                 losses_3d_train[-1] * 1000,
                 losses_3d_train_eval[-1] * 1000,
-                losses_3d_valid[-1] * 1000))
+                losses_3d_valid[-1] * 1000)
+            print(log_str)
+            with open(args.exp +'.log', 'a') as f:
+                f.write(log_str + '\n')
 
         # Decay learning rate exponentially
         # lr *= lr_decay
@@ -505,7 +508,7 @@ if not args.evaluate:
                 'lr': lr,
                 'random_state': train_generator.random_state(),
                 'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
+                'lr_scheduler': scheduler.state_dict(),
                 'model_pos': model_pos_train.state_dict(),
                 # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                 # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
@@ -521,14 +524,14 @@ if not args.evaluate:
                 'lr': lr,
                 'random_state': train_generator.random_state(),
                 'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
+                'lr_scheduler': scheduler.state_dict(),
                 'model_pos': model_pos_train.state_dict(),
                 # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
                 # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
             }, best_chk_path)
 
         # Save training curves after every epoch, as .png images (if requested)
-        if args.export_training_curves and epoch > 1:
+        if args.export_training_curves:
             if 'matplotlib' not in sys.modules:
                 import matplotlib
 
