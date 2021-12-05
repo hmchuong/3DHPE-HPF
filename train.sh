@@ -1,1 +1,1 @@
-CUDA_VISIBLE_DEVICES=5 taskset -c 20-69 python3.7 run_poseformer.py -k cpn_ft_h36m_dbb -f 81 -lr 0.001 -lrd 0.5 --batch-size 512 --epoch 50 --exp baseline_small --checkpoint-frequency 3 --export-training-curves
+CUDA_VISIBLE_DEVICES=5 taskset -c 20-69 python3.7 tune_poseformer.py -k cpn_ft_h36m_dbb -f 81 -lr 0.00004 -lrd 0.99 --batch-size 512 --epoch 10 --exp tune_param

@@ -487,11 +487,11 @@ if not args.evaluate:
                 f.write(log_str + '\n')
 
         # Decay learning rate exponentially
-        # lr *= lr_decay
-        # for param_group in optimizer.param_groups:
-        #     param_group['lr'] *= lr_decay
+        lr *= lr_decay
+        for param_group in optimizer.param_groups:
+            param_group['lr'] *= lr_decay
         lr = optimizer.param_groups[0]['lr']
-        scheduler.step(losses_3d_valid[-1])
+        # scheduler.step(losses_3d_valid[-1])
         epoch += 1
 
         # Decay BatchNorm momentum
@@ -547,7 +547,7 @@ if not args.evaluate:
             plt.ylabel('MPJPE (m)')
             plt.xlabel('Epoch')
             plt.xlim((3, epoch))
-            plt.savefig(os.path.join(args.checkpoint, 'loss_3d.png'))
+            plt.savefig(os.path.join(args.checkpoint, '{}_loss_3d.png'.format(args.exp)))
 
             plt.close('all')
 

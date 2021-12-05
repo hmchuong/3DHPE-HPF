@@ -10,6 +10,127 @@ import torch
 import numpy as np
 from .valid_angle_check import h36m_valid_angle_check_torch
 
+def bone_len_constraint(predicted):
+
+    # Relative position wrt Hip
+    data = predicted.clone()
+    data = data-data[:,:, 0, :]
+
+    L = 0
+    # Shoulder
+    rshoulder = torch.norm(data[:,:,14,:] - data[:,:,8,:], dim=-1)
+    lshoulder = torch.norm(data[:,:,11,:] - data[:,:,8,:], dim=-1)
+    L += torch.nn.functional.mse_loss(rshoulder, lshoulder, reduction='mean')
+
+    # Above arm
+    raarm = torch.norm(data[:,:,15,:] - data[:,:,14,:], dim=-1)
+    laarm = torch.norm(data[:,:,12,:] - data[:,:,11,:], dim=-1)
+    L += torch.nn.functional.mse_loss(raarm, laarm, reduction='mean')
+
+    # Below arm
+    rbarm = torch.norm(data[:,:,16,:] - data[:,:,15,:], dim=-1)
+    lbarm = torch.norm(data[:,:,13,:] - data[:,:,12,:], dim=-1)
+    L += torch.nn.functional.mse_loss(rbarm, lbarm, reduction='mean')
+
+    # Hip
+    rhip = torch.norm(data[:, :, 1, :] - data[:, :, 0, :], dim=-1)
+    lhip = torch.norm(data[:, :, 4, :] - data[:, :, 0, :], dim=-1)
+    L += torch.nn.functional.mse_loss(rhip, lhip, reduction='mean')
+
+    # Thigh
+    rthigh = torch.norm(data[:, :, 2, :] - data[:, :, 1, :], dim=-1)
+    lthigh = torch.norm(data[:, :, 5, :] - data[:, :, 4, :], dim=-1)
+    L += torch.nn.functional.mse_loss(rthigh, lthigh, reduction='mean')
+
+    # Leg
+    rleg = torch.norm(data[:, :, 2, :] - data[:, :, 3, :], dim=-1)
+    lleg = torch.norm(data[:, :, 5, :] - data[:, :, 6, :], dim=-1)
+    L += torch.nn.functional.mse_loss(rleg, lleg, reduction='mean')
+
+    return L
+
+
+def angle_orientation_constraint(predicted):
+    
+    # Relative position wrt Hip
+    data = predicted.clone()
+    data = data-data[:,:, 0, :]
+
+    #1. Joint angle orientation constraint: Right Arm
+    vtsr = data[:,:,14,:] - data[:,:,8,:] # RShoulder - Thorax
+    vsrer = data[:,:,15,:] - data[:,:,14,:] # RElbow - RShoulder
+    verwr = data[:,:,16,:] - data[:,:,15,:] # RWrist - RElbow
+    
+    #2. Joint angle orientation constraints: Left Arm
+    vslel = data[:,:,12,:] - data[:,:,11,:] # LElbow - Lshoulder
+    vtsl =   data[:,:,11,:] - data[:,:,8,:] # LShoulder - Thorax
+    velwl =  data[:,:,13,:] - data[:,:,12,:] # LWrist - LElbow
+
+    #3. Joint angle orientation constraints: Right Leg
+    vhrkr = data[:,:,2,:] - data[:,:,1,:] # RKnee - RHip
+    vphr = data[:,:,1,:] - data[:,:,0,:] #RHip - Hip
+    vkrar = data[:,:,3,:] - data[:,:,8,:] #RFoot - RKnee
+
+    #4. Joint angle orientation constraints: Right Leg
+    vphl = data[:,:,4,:] - data[:,:,0,:] #LHip - Hip
+    vhlkl = data[:,:,5,:] - data[:,:,4,:] #LKnee - LHip
+    vklal = data[:,:,6,:] - data[:,:,5,:] #LFoot - LKnee
+
+    limb_orientaion_loss = torch.clamp(-torch.cross(vtsr, vsrer, dim = -1) * verwr, min=0) + \
+        torch.clamp(-torch.cross(vslel, vtsl, dim=-1) * velwl, min=0) + \
+        torch.clamp(-torch.cross(vhrkr, vphr, dim=-1) * vkrar, min=0) + \
+        torch.clamp(-torch.cross(vphl, vhlkl, dim=-1) * vklal, min=0)
+    limb_orientaion_loss = torch.mean(limb_orientaion_loss)
+
+    #5. Joint angle orientation constraints: Torso
+    vnh = data[:,:,10,:] - data[:,:,9,:] # Head - Neck
+    vtp = data[:,:,0,:] - data[:,:,8,:] # Hip - Thorax
+    
+    torso_orientation_loss = torch.clamp(vnh*vtp, min=0) + torch.clamp(vtsr*vtsl, min=0) + torch.clamp(vphr*vphl, min=0) 
+    torso_orientation_loss = torch.mean(torso_orientation_loss)
+    
+    return limb_orientaion_loss, torso_orientation_loss
+
+def limb_joint_angle(predicted, target):
+    def cs(p,j,c):
+        u = p - j
+        v = j - c
+        uv= u*v #u.v
+        Ak = torch.sum(uv,dim=-1) / (torch.norm(u, dim=-1)*torch.norm(v, dim=-1))
+        indices = torch.isnan(Ak)
+        Ak[indices] = 0
+        return Ak
+        
+    # 1. Angle smoothness -- IN PROGRESS
+    '''
+    Joint angle loss merely constrains the angles of the limb joints:
+        shoulders, elbows, hips and knees, i.e., M = 8. 
+    '''
+    def Acs(datad):
+        # Relative position wrt Hip
+        data = datad.clone()
+        # import pdb; pdb.set_trace()
+        data = data-data[:,:, 0, :]
+        #J: Shoudlers, Elbows, Hips, Knees - L,R
+        #P: Thorax, Shoulders, Hip, Hips - L,R
+        #C: Elbows, Wrists, Knees, Foot - L,R
+        j=[11, 12, 4, 5, 14, 15, 1, 2]
+        p=[8, 11, 0, 4, 8, 14, 0, 1]
+        c=[12, 13, 5, 6, 12, 16, 2, 3]
+        # j = [1, 2, 4, 5, 7, 7, 7, 8, 9, 11, 12, 14, 15]
+        # p = [0, 1, 0, 4, 0, 0, 0, 7, 8, 8, 11, 8, 14]
+        # c = [2, 3, 5, 6, 8, 11, 14, 9, 10, 12, 13, 15, 16]
+        return cs(data[:,:,p,:],data[:,:,j,:],data[:,:,c,:])
+    
+    # debug_time = time()
+    A = Acs(predicted) #A shape [512,1,8]
+    # print("cosine time", time() - debug_time)
+    Ak = Acs(target)
+    Langle = SmoothL1(torch.sum(A-Ak,dim=-1))
+    Langle = torch.mean(Langle)
+    
+    return Langle
+
 def angle_losses(predicted, target):
     """
     Modified joint position error. 
@@ -83,7 +204,7 @@ def angle_losses(predicted, target):
         debug_time = time()
         # Relative position wrt Hip
         data = predicted
-        data = data-data[-1,0,:]
+        data = data-data[:,:, 0, :]
 
         #3. Joint angle orientation constraint: Lower Arm
         vtsr = data[:,:,14,:] - data[:,:,8,:] #RShoulder - Thorax
@@ -198,7 +319,7 @@ def SmoothL1(x):
     return x
 
 valid_ang = pickle.load(open('./data/h36m_valid_angle_0212.p', "rb"))
-def angle_loss(y, y_gt):
+def advanced_angle_constraint(y, y_gt):
     ang_names = list(valid_ang.keys())
     y = y.reshape([-1, 17, 3])
     y_gt = y_gt.reshape([-1, 17, 3])
