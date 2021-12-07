@@ -312,7 +312,7 @@ def SmoothL1(x):
     x = x.clone()
     #if x<1: x = 0.5x^2
     indices = torch.abs(x)<1
-    x[indices] = 0.5*x[indices]**2
+    x[indices] = 0.5*(x[indices]**2)
 
     #otherwise: x = |x|-0.5
     x[~indices] = torch.abs(x[~indices])-0.5
@@ -365,7 +365,8 @@ def smooth_mpjpe(predicted, target):
     often referred to as "Protocol #1" in many papers.
     """
     assert predicted.shape == target.shape
-    return torch.mean(SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1)))
+    return torch.nn.SmoothL1Loss(reduction='mean')(predicted, target)
+    # return torch.mean(SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1, p=1)))
     
 def weighted_mpjpe(predicted, target, w):
     """

@@ -327,7 +327,7 @@ if not args.evaluate:
             # loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
             # print("angle time", time() - debug_time)
             debug_time = time()
-            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d)
+            loss_3d_pos = smooth_mpjpe(predicted_3d_pos, inputs_3d)
 
             # print("mpjpe time", time() - debug_time)
             debug_time = time()

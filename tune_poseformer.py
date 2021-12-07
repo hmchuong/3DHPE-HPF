@@ -32,6 +32,8 @@ from time import time
 from common.utils import *
 
 from ray import tune
+from ray.tune.suggest.hyperopt import HyperOptSearch
+from ray.tune.suggest.bayesopt import BayesOptSearch
 
 torch.manual_seed(2021)
 
@@ -287,13 +289,20 @@ def training_function(config):
         print('** The final evaluation will be carried out after the last training epoch.')
 
         # Load hyper parameter from config
-        use_smooth_L1 = config["smooth_l1"] # Using smooth L1 for MPJPE or not
+        use_smooth_L1 = False #config["smooth_l1"] > 0.5 # Using smooth L1 for MPJPE or not
         lambda1 = config["lambda1"] # mpjpe
-        lambda2 = config["lambda2"] # bone length
+        lambda2 = 0 #config["lambda2"] # bone length
         lambda3 = config["lambda3"] # angle orientation (limb)
         lambda4 = config["lambda4"] # angle orientation (torso)
         lambda5 = config["lambda5"] # joint angles of limbs
         lambda6 = config["lambda6"] # advanced angle constraints
+
+        lambda1 = round(lambda1/0.1)/10
+        lambda2 = round(lambda2/0.1)/10 
+        lambda3 = round(lambda3/0.1)/10
+        lambda4 = round(lambda4/0.1)/10
+        lambda5 = round(lambda5/0.1)/10
+        lambda6 = round(lambda6/0.1)/10
 
         # Pos model only
         while epoch < args.epochs:
@@ -500,25 +509,59 @@ def training_function(config):
 
 if __name__ == "__main__":
     def stopper(trial_id, result):
-        if result["training_iteration"] > 1:
-            return result["mean_loss"] * 1000 > 200 or result["mean_loss"] * 1000 < 66.5
-        return False
+        # if result["training_iteration"] > 1:
+        #     return result["mean_loss"] * 1000 > 150
+        return result["training_iteration"] >= 3 or result["mean_loss"] * 1000 > 150
+    # config={
+    #         "lambda1": tune.choice([0, 0.1, 0.5, 1.0]),
+    #         "lambda2": tune.choice([0, 0.1, 0.5, 1.0]),
+    #         "lambda3": tune.choice([0, 0.1, 0.5, 1.0]),
+    #         "lambda4": tune.choice([0, 0.1, 0.5, 1.0]),
+    #         "lambda5": tune.choice([0, 0.1, 0.5, 1.0]),
+    #         "lambda6": tune.choice([0, 0.1, 0.5, 1.0]),
+    #         "smooth_l1": tune.choice([True, False])
+    #     }
+    # config={
+    #         "lambda1": tune.uniform(0, 1.0),
+    #         "lambda2": tune.uniform(0, 1.0),
+    #         "lambda3": tune.uniform(0, 1.0),
+    #         "lambda4": tune.uniform(0, 1.0),
+    #         "lambda5": tune.uniform(0, 1.0),
+    #         "lambda6": tune.uniform(0, 1.0),
+    #         "smooth_l1": tune.uniform(0, 1.0)
+    #     }
+    config={
+            "lambda1": tune.uniform(0.5, 1.0),
+            "lambda2": tune.uniform(0, 1.0),
+            "lambda3": tune.uniform(0, 1.0),
+            "lambda4": tune.uniform(0, 1.0),
+            "lambda5": tune.uniform(0, 1.0),
+            "lambda6": tune.uniform(0, 1.0)
+        }
+    current_best_params = [{
+        "lambda1": 1.0,
+        "lambda2": 0,
+        "lambda3": 0,
+        "lambda4": 0,
+        "lambda5": 0,
+        "lambda6": 0
+    }]
+    # search_algo = HyperOptSearch(
+    #     metric="mean_loss", mode="min",
+    #     points_to_evaluate=current_best_params)
+    search_algo = BayesOptSearch(
+        metric="mean_loss", mode="min",
+        points_to_evaluate=current_best_params 
+    )
     analysis = tune.run(
         training_function,
         metric="mean_loss",
-        name="tuning_losses",
+        name="tuning_losses_bayesian_1207",
         mode='min',
-        verbose=0,
+        verbose=1,
+        search_alg=search_algo,
         resources_per_trial={'gpu': 1, 'cpu': 20},
-        config={
-            "lambda1": tune.choice([0, 0.1, 0.5, 1.0]),
-            "lambda2": tune.choice([0, 0.1, 0.5, 1.0]),
-            "lambda3": tune.choice([0, 0.1, 0.5, 1.0]),
-            "lambda4": tune.choice([0, 0.1, 0.5, 1.0]),
-            "lambda5": tune.choice([0, 0.1, 0.5, 1.0]),
-            "lambda6": tune.choice([0, 0.1, 0.5, 1.0]),
-            "smooth_l1": tune.choice([True, False])
-        }, num_samples=30, stop=stopper)
+        config=config, num_samples=100, stop=stopper)
 
     print("Best config: ", analysis.get_best_config(
         metric="mean_loss", mode="min"))
