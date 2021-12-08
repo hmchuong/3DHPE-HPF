@@ -80,13 +80,44 @@ def angle_orientation_constraint(predicted):
         torch.clamp(-torch.cross(vslel, vtsl, dim=-1) * velwl, min=0) + \
         torch.clamp(-torch.cross(vhrkr, vphr, dim=-1) * vkrar, min=0) + \
         torch.clamp(-torch.cross(vphl, vhlkl, dim=-1) * vklal, min=0)
+
+    # print("limb",limb_orientaion_loss.mean())
+    
+    limb_orientaion_loss, ind = (
+            limb_orientaion_loss.contiguous()
+            .view(
+                -1,
+            )
+            .contiguous()
+            .sort()
+        )
+    min_value = limb_orientaion_loss[min(100000, limb_orientaion_loss.numel() - 1)]
+    threshold = max(min_value, 0.05)
+
+    # limb_orientaion_loss = limb_orientaion_loss[ind]
+    limb_orientaion_loss = limb_orientaion_loss[limb_orientaion_loss < threshold]
     limb_orientaion_loss = torch.mean(limb_orientaion_loss)
+    # print("limb mean", limb_orientaion_loss)
 
     #5. Joint angle orientation constraints: Torso
     vnh = data[:,:,10,:] - data[:,:,9,:] # Head - Neck
     vtp = data[:,:,0,:] - data[:,:,8,:] # Hip - Thorax
     
     torso_orientation_loss = torch.clamp(vnh*vtp, min=0) + torch.clamp(vtsr*vtsl, min=0) + torch.clamp(vphr*vphl, min=0) 
+    # print("torso",torso_orientation_loss.shape,limb_orientaion_loss.max(), limb_orientaion_loss.min())
+    torso_orientation_loss, ind = (
+            torso_orientation_loss.contiguous()
+            .view(
+                -1,
+            )
+            .contiguous()
+            .sort()
+        )
+    min_value = torso_orientation_loss[min(100000, limb_orientaion_loss.numel() - 1)]
+    threshold = max(min_value, 0.05)
+
+    # torso_orientation_loss = torso_orientation_loss[ind]
+    torso_orientation_loss = torso_orientation_loss[torso_orientation_loss < threshold]
     torso_orientation_loss = torch.mean(torso_orientation_loss)
     
     return limb_orientaion_loss, torso_orientation_loss
@@ -327,6 +358,7 @@ def advanced_angle_constraint(y, y_gt):
     ang_cos_gt = h36m_valid_angle_check_torch(y_gt)
     loss = torch.tensor(0, dtype=y.dtype, device=y.device)
     N = 1
+    smooth_l1 = torch.nn.SmoothL1Loss(reduction='sum')
     for an in ang_names:
         valid = torch.ones_like(ang_cos[an])
         lower_bound = valid_ang[an][0].min().item()
@@ -334,7 +366,8 @@ def advanced_angle_constraint(y, y_gt):
             # loss += torch.exp(-b * (ang_cos[an] - lower_bound)).mean()
             if torch.any(ang_cos[an] < lower_bound):
                 # loss += b * torch.exp(-(ang_cos[an][ang_cos[an] < lower_bound] - lower_bound)).mean()
-                loss += (ang_cos[an][ang_cos[an] < lower_bound] - lower_bound).pow(2).sum()
+                lower_array = torch.ones_like(ang_cos[an][ang_cos[an] < lower_bound]) * lower_bound
+                loss += smooth_l1(ang_cos[an][ang_cos[an] < lower_array], lower_array)
                 N += ang_cos[an][ang_cos[an] < lower_bound].shape[0]
                 valid[ang_cos[an] < lower_bound] = 0
         upper_bound = valid_ang[an][1].max().item()
@@ -342,12 +375,13 @@ def advanced_angle_constraint(y, y_gt):
             # loss += torch.exp(b * (ang_cos[an] - upper_bound)).mean()
             if torch.any(ang_cos[an] > upper_bound):
                 # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
-                loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).sum()
+                upper_array = torch.ones_like(ang_cos[an][ang_cos[an] > upper_bound]) * upper_bound
+                loss += smooth_l1(ang_cos[an][ang_cos[an] > upper_bound], upper_array)
                 valid[ang_cos[an] > upper_bound] = 0
                 N += ang_cos[an][ang_cos[an] > upper_bound].shape[0]
-        # if torch.any(valid > 0):
-        #     loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).sum()
-        #     N += ang_cos[an][valid > 0].shape[0]
+        if torch.any(valid > 0):
+            loss += smooth_l1(ang_cos[an][valid > 0], ang_cos_gt[an][valid > 0])
+            N += ang_cos[an][valid > 0].shape[0]
     loss = loss/N
     return loss
 

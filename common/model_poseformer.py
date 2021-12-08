@@ -158,8 +158,8 @@ class PoseTransformer(nn.Module):
 
         self.use_vertice_masking = False
         self.use_pose_masking = False
-        self.vetices_mvm_percent = 0.3
-        self.poses_mvm_percent = 0.4
+        self.vetices_mvm_percent = 0.2
+        self.poses_mvm_percent = 0.2
 
 
     def Spatial_forward_features(self, x):
@@ -202,13 +202,15 @@ class PoseTransformer(nn.Module):
         if self.training and (self.use_pose_masking or self.use_vertice_masking):
             
             mask = torch.ones_like(x)
+            mask = mask.permute(0, 2, 3, 1)
             
             # Masking vertices
-            pb = self.random.random_sample()
-            masked_num = int(pb * self.vetices_mvm_percent * p * r * b)
-            indices = self.random.choice(np.arange(p * r * b),replace=False,size=masked_num)
-            mask = mask.permute(0, 2, 3, 1).reshape(-1, 2)
-            mask[indices] = 0
+            if self.use_vertice_masking:
+                pb = self.random.random_sample()
+                masked_num = int(pb * self.vetices_mvm_percent * p * r * b)
+                indices = self.random.choice(np.arange(p * r * b),replace=False,size=masked_num)
+                mask = mask.reshape(-1, 2)
+                mask[indices] = 0
 
             # Masking poses
             if self.use_pose_masking:
@@ -219,9 +221,9 @@ class PoseTransformer(nn.Module):
                 mask[indices] = 0
 
             # Masking
-            constant_tensor = torch.ones_like(x) * 0.001
             mask = mask.reshape(b, r, p, 2).permute(0, 3, 1, 2)
             if self.use_vertice_masking:
+                constant_tensor = torch.ones_like(x) * 0.001
                 x = x * mask + constant_tensor * (1 - mask)
 
                 
@@ -235,10 +237,7 @@ class PoseTransformer(nn.Module):
             constant_tensor = torch.ones_like(x).cuda(x.device) * 0.001
 
             x = pose_mask * x + constant_tensor * (1 - pose_mask)
-        # import pdb; pdb.set_trace();
-        # pe = torch.from_numpy(positional_encoding_81f).cuda(x.device)
-        # pe = pe.unsqueeze(0).repeat(x.shape[0], 1, 1)
-        # x = x + pe.type(x.dtype)
+
         x = self.forward_features(x)
         x = self.head(x)
 
