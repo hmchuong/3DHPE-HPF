@@ -318,13 +318,13 @@ if not args.evaluate:
             predicted_3d_pos = model_pos_train(inputs_2d)
             # del inputs_2d
             # torch.cuda.empty_cache()
-            loss_ang = torch.tensor(0).to(predicted_3d_pos.device)
+            # loss_ang = torch.tensor(0).to(predicted_3d_pos.device)
             # loss_ang = limb_joint_angle(predicted_3d_pos, inputs_3d)
             # loss_ang = advanced_angle_constraint(predicted_3d_pos, inputs_3d)
             # loss_ang = advanced_angle_constraint(predicted_3d_pos, inputs_3d, True)
-            # limb_ang_orient, torso_ang_orient = angle_orientation_constraint(predicted_3d_pos)
+            limb_ang_orient, torso_ang_orient = angle_orientation_constraint(predicted_3d_pos, top_k=0.6)
             # ang_constrain = advanced_angle_constraint(predicted_3d_pos, inputs_3d)
-            # loss_ang = limb_ang_orient + torso_ang_orient
+            loss_ang = limb_ang_orient + torso_ang_orient
             
             # print("Forward time", time() - debug_time)
             debug_time = time()
@@ -332,7 +332,7 @@ if not args.evaluate:
             # loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
             # print("angle time", time() - debug_time)
             debug_time = time()
-            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d, top_k=0.7)
+            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d, top_k=0.8)
 
             # print("mpjpe time", time() - debug_time)
             debug_time = time()
@@ -342,7 +342,7 @@ if not args.evaluate:
             epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_ang.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-            loss_total =  1.0 * loss_3d_pos + 0.0 * loss_ang
+            loss_total =  0.8 * loss_3d_pos + 0.8 * loss_ang
             # loss_total = loss_ang
             if batch_idx % 100 == 0:
                 print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(

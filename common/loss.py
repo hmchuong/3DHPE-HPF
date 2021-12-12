@@ -360,6 +360,7 @@ def advanced_angle_constraint(y, y_gt, customized=False):
     ang_cos_gt = h36m_valid_angle_check_torch(y_gt)
     loss = torch.tensor(0, dtype=y.dtype, device=y.device)
     N = 1
+    smooth_l1 = torch.nn.SmoothL1Loss(reduction='sum')
     for an in ang_names:
         valid = torch.ones_like(ang_cos[an])
         lower_bound = valid_ang[an][0].min().item()
@@ -367,7 +368,8 @@ def advanced_angle_constraint(y, y_gt, customized=False):
             # loss += torch.exp(-b * (ang_cos[an] - lower_bound)).mean()
             if torch.any(ang_cos[an] < lower_bound):
                 # loss += b * torch.exp(-(ang_cos[an][ang_cos[an] < lower_bound] - lower_bound)).mean()
-                loss += (ang_cos[an][ang_cos[an] < lower_bound] - lower_bound).pow(2).sum()
+                lower_array = torch.ones_like(ang_cos[an][ang_cos[an] < lower_bound]) * lower_bound
+                loss += smooth_l1(ang_cos[an][ang_cos[an] < lower_array], lower_array)
                 N += ang_cos[an][ang_cos[an] < lower_bound].shape[0]
                 valid[ang_cos[an] < lower_bound] = 0
         upper_bound = valid_ang[an][1].max().item()
@@ -375,7 +377,8 @@ def advanced_angle_constraint(y, y_gt, customized=False):
             # loss += torch.exp(b * (ang_cos[an] - upper_bound)).mean()
             if torch.any(ang_cos[an] > upper_bound):
                 # loss += b * torch.exp(ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).mean()
-                loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).sum()
+                upper_array = torch.ones_like(ang_cos[an][ang_cos[an] > upper_bound]) * upper_bound
+                loss += smooth_l1(ang_cos[an][ang_cos[an] > upper_bound], upper_array)
                 valid[ang_cos[an] > upper_bound] = 0
                 N += ang_cos[an][ang_cos[an] > upper_bound].shape[0]
         if torch.any(valid > 0) and customized:
