@@ -50,7 +50,7 @@ def bone_len_constraint(predicted):
     return L
 
 
-def angle_orientation_constraint(predicted):
+def angle_orientation_constraint(predicted, top_k=1.0):
     
     # Relative position wrt Hip
     data = predicted.clone()
@@ -80,13 +80,46 @@ def angle_orientation_constraint(predicted):
         torch.clamp(-torch.cross(vslel, vtsl, dim=-1) * velwl, min=0) + \
         torch.clamp(-torch.cross(vhrkr, vphr, dim=-1) * vkrar, min=0) + \
         torch.clamp(-torch.cross(vphl, vhlkl, dim=-1) * vklal, min=0)
+
+    # print("limb",limb_orientaion_loss.mean())
+    
+    # limb_orientaion_loss, ind = (
+    #         limb_orientaion_loss.contiguous()
+    #         .view(
+    #             -1,
+    #         )
+    #         .contiguous()
+    #         .sort()
+    #     )
+    # min_value = limb_orientaion_loss[min(100000, limb_orientaion_loss.numel() - 1)]
+    # threshold = max(min_value, 0.05)
+
+    # limb_orientaion_loss = limb_orientaion_loss[limb_orientaion_loss < threshold]
+    limb_orientaion_loss = limb_orientaion_loss.contiguous().view(-1).contiguous()
+    limb_orientaion_loss, idxs = torch.topk(limb_orientaion_loss, int(top_k * limb_orientaion_loss.size()[0]))
     limb_orientaion_loss = torch.mean(limb_orientaion_loss)
+    # print("limb mean", limb_orientaion_loss)
 
     #5. Joint angle orientation constraints: Torso
     vnh = data[:,:,10,:] - data[:,:,9,:] # Head - Neck
     vtp = data[:,:,0,:] - data[:,:,8,:] # Hip - Thorax
     
     torso_orientation_loss = torch.clamp(vnh*vtp, min=0) + torch.clamp(vtsr*vtsl, min=0) + torch.clamp(vphr*vphl, min=0) 
+    # print("torso",torso_orientation_loss.shape,limb_orientaion_loss.max(), limb_orientaion_loss.min())
+    # torso_orientation_loss, ind = (
+    #         torso_orientation_loss.contiguous()
+    #         .view(
+    #             -1,
+    #         )
+    #         .contiguous()
+    #         .sort()
+    #     )
+    # min_value = torso_orientation_loss[min(100000, limb_orientaion_loss.numel() - 1)]
+    # threshold = max(min_value, 0.05)
+    
+    # torso_orientation_loss = torso_orientation_loss[torso_orientation_loss < threshold]
+    torso_orientation_loss = torso_orientation_loss.contiguous().view(-1).contiguous()
+    torso_orientation_loss, idxs = torch.topk(torso_orientation_loss, int(top_k * torso_orientation_loss.size()[0]))
     torso_orientation_loss = torch.mean(torso_orientation_loss)
     
     return limb_orientaion_loss, torso_orientation_loss
@@ -319,7 +352,7 @@ def SmoothL1(x):
     return x
 
 valid_ang = pickle.load(open('./data/h36m_valid_angle_0212.p', "rb"))
-def advanced_angle_constraint(y, y_gt):
+def advanced_angle_constraint(y, y_gt, customized=False):
     ang_names = list(valid_ang.keys())
     y = y.reshape([-1, 17, 3])
     y_gt = y_gt.reshape([-1, 17, 3])
@@ -345,19 +378,25 @@ def advanced_angle_constraint(y, y_gt):
                 loss += (ang_cos[an][ang_cos[an] > upper_bound] - upper_bound).pow(2).sum()
                 valid[ang_cos[an] > upper_bound] = 0
                 N += ang_cos[an][ang_cos[an] > upper_bound].shape[0]
-        # if torch.any(valid > 0):
-        #     loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).sum()
-        #     N += ang_cos[an][valid > 0].shape[0]
+        if torch.any(valid > 0) and customized:
+            loss += (ang_cos[an][valid > 0] - ang_cos_gt[an][valid > 0]).pow(2).sum()
+            N += ang_cos[an][valid > 0].shape[0]
     loss = loss/N
     return loss
 
-def mpjpe(predicted, target):
+def mpjpe(predicted, target, top_k=1.0):
     """
     Mean per-joint position error (i.e. mean Euclidean distance),
     often referred to as "Protocol #1" in many papers.
     """
     assert predicted.shape == target.shape
-    return torch.mean(torch.norm(predicted - target, dim=len(target.shape)-1))
+    dist = torch.norm(predicted - target, dim=len(target.shape)-1)
+    if top_k == 1.0:
+        return torch.mean(dist)
+    else:
+        dist = dist.contiguous().view(-1).contiguous()
+        valid_loss, idxs = torch.topk(dist, int(top_k * dist.size()[0]))
+        return torch.mean(valid_loss)
 
 def smooth_mpjpe(predicted, target):
     """
@@ -365,8 +404,8 @@ def smooth_mpjpe(predicted, target):
     often referred to as "Protocol #1" in many papers.
     """
     assert predicted.shape == target.shape
-    return torch.nn.SmoothL1Loss(reduction='mean')(predicted, target)
-    # return torch.mean(SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1, p=1)))
+    # return torch.nn.SmoothL1Loss(reduction='mean')(predicted, target)
+    return torch.mean(SmoothL1(torch.norm(predicted - target, dim=len(target.shape)-1, p=1)))
     
 def weighted_mpjpe(predicted, target, w):
     """
