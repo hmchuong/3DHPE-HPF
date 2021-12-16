@@ -7,6 +7,7 @@
 import pickle
 from time import time
 import torch
+import math
 import numpy as np
 from .valid_angle_check import h36m_valid_angle_check_torch
 
@@ -386,6 +387,17 @@ def advanced_angle_constraint(y, y_gt, customized=False):
             N += ang_cos[an][valid > 0].shape[0]
     loss = loss/N
     return loss
+    
+def wing_loss(pred, target, omega=0.01, epsilon=2):
+    y = target
+    y_hat = pred
+    delta_y = (y - y_hat).abs()
+    delta_y1 = delta_y[delta_y < omega]
+    delta_y2 = delta_y[delta_y >= omega]
+    loss1 = omega * torch.log(1 + delta_y1 / epsilon)
+    C = omega - omega * math.log(1 + omega / epsilon)
+    loss2 = delta_y2 - C
+    return (loss1.sum() + loss2.sum()) / (len(loss1) + len(loss2))
 
 def mpjpe(predicted, target, top_k=1.0):
     """
