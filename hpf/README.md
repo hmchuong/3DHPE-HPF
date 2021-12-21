@@ -2,10 +2,6 @@
 <h1>Domain adversarial STS-GCN</h1>
 </div>
 
-<div align="center"> <h3> Abstract </h3>  </div>
-<div align="justify">
-
-</div>
 
  ### Human 3.6M Dataset
 
