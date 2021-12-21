@@ -2,6 +2,10 @@
 <h1>Domain adversarial STS-GCN</h1>
 </div>
 
+ ### Install dependencies:
+```
+ $ pip install -r requirements.txt
+```
 
  ### Human 3.6M Dataset
 
