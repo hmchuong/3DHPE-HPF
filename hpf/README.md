@@ -24,7 +24,7 @@ H3.6m
 ```
 
 ```
-Put the all downloaded datasets in ../datasets directory.
+The downloaded datasets needs to be stored in ../datasets directory.
 ```
 
  ### Train
