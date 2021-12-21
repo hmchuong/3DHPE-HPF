@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument('-e', '--epochs', default=200, type=int, metavar='N', help='number of training epochs')
     parser.add_argument('-b', '--batch-size', default=512, type=int, metavar='N', help='batch size in terms of predicted frames')
     parser.add_argument('-drop', '--dropout', default=0., type=float, metavar='P', help='dropout probability')
-    parser.add_argument('-lr', '--learning-rate', default=0.0001, type=float, metavar='LR', help='initial learning rate')
+    parser.add_argument('-lr', '--learning-rate', default=0.00004, type=float, metavar='LR', help='initial learning rate')
     parser.add_argument('-lrd', '--lr-decay', default=0.99, type=float, metavar='LR', help='learning rate decay per epoch')
     parser.add_argument('-no-da', '--no-data-augmentation', dest='data_augmentation', action='store_false',
                         help='disable train-time flipping')

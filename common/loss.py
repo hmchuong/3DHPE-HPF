@@ -8,7 +8,17 @@ import pickle
 from time import time
 import torch
 import numpy as np
+import math
 from .valid_angle_check import h36m_valid_angle_check_torch
+
+def mpjpe_wing(pred, target, omega=0.05, epsilon=0.02,p=1):
+    dist = torch.norm(pred - target, dim=len(target.shape)-1, p=p).abs()
+    delta_y1 = dist[dist < omega]
+    delta_y2 = dist[dist >= omega]
+    loss1 = omega * torch.log(1 + delta_y1 / epsilon)
+    C = omega - omega * math.log(1 + omega / epsilon)
+    loss2 = delta_y2 - C
+    return (loss1.sum() + loss2.sum()) / (len(loss1) + len(loss2))
 
 def bone_len_constraint(predicted):
 

@@ -218,11 +218,15 @@ if torch.cuda.is_available():
     model_pos_train = nn.DataParallel(model_pos_train)
     model_pos_train = model_pos_train.cuda()
 
-
+# checkpoint = torch.load("/home/ubuntu/PoseFormerPlus/base_2021.pth", map_location=lambda storage, loc: storage)
+# model_pos_train.load_state_dict(checkpoint)
+# model_pos.load_state_dict(checkpoint)
 if args.resume or args.evaluate:
     chk_filename = os.path.join(args.checkpoint, args.resume if args.resume else args.evaluate)
     print('Loading checkpoint', chk_filename)
+   
     checkpoint = torch.load(chk_filename, map_location=lambda storage, loc: storage)
+    print('EPOCH: ', checkpoint['epoch'])
     model_pos_train.load_state_dict(checkpoint['model_pos'], strict=False)
     model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
 
@@ -318,13 +322,13 @@ if not args.evaluate:
             predicted_3d_pos = model_pos_train(inputs_2d)
             # del inputs_2d
             # torch.cuda.empty_cache()
-            # loss_ang = torch.tensor(0).to(predicted_3d_pos.device)
+            loss_ang = torch.tensor(0).to(predicted_3d_pos.device)
             # loss_ang = limb_joint_angle(predicted_3d_pos, inputs_3d)
             # loss_ang = advanced_angle_constraint(predicted_3d_pos, inputs_3d)
             # loss_ang = advanced_angle_constraint(predicted_3d_pos, inputs_3d, True)
-            limb_ang_orient, torso_ang_orient = angle_orientation_constraint(predicted_3d_pos, top_k=0.6)
+            # limb_ang_orient, torso_ang_orient = angle_orientation_constraint(predicted_3d_pos, top_k=0.6)
             # ang_constrain = advanced_angle_constraint(predicted_3d_pos, inputs_3d)
-            loss_ang = limb_ang_orient + torso_ang_orient
+            # loss_ang = limb_ang_orient + torso_ang_orient
             
             # print("Forward time", time() - debug_time)
             debug_time = time()
@@ -332,7 +336,7 @@ if not args.evaluate:
             # loss_ang = angle_losses(predicted_3d_pos, inputs_3d)
             # print("angle time", time() - debug_time)
             debug_time = time()
-            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d, top_k=0.8)
+            loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d, top_k=1.0)
 
             # print("mpjpe time", time() - debug_time)
             debug_time = time()
@@ -342,7 +346,7 @@ if not args.evaluate:
             epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_ang.item()
             N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-            loss_total =  0.8 * loss_3d_pos + 0.8 * loss_ang
+            loss_total =  mpjpe_wing(predicted_3d_pos, inputs_3d, omega=0.01, epsilon=0.005, p=2) #+ 0.0 * loss_ang
             # loss_total = loss_ang
             if batch_idx % 100 == 0:
                 print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - angle loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f} - avg. angle: {:.4f}".format(

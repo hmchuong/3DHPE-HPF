@@ -53,7 +53,6 @@ We also provide pre-trained 81-frame model (Ground truth 2D pose as input) [here
 python run_poseformer.py -k gt -f 81 -c checkpoint --evaluate gt81f.bin
 ```
 
-
 ### Training new models
 
 * To train a model from scratch (CPN detected 2D pose as input), run:

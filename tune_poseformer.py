@@ -35,8 +35,6 @@ from ray import tune
 from ray.tune.suggest.hyperopt import HyperOptSearch
 from ray.tune.suggest.bayesopt import BayesOptSearch
 
-torch.manual_seed(2021)
-
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
@@ -47,8 +45,11 @@ def training_function(config):
     ###################
     args = parse_args()
     # args, unknown = parser.parse_known_args()
-    # print(args)
+    print(args)
     print(config)
+    torch.manual_seed(2021)
+    torch.cuda.manual_seed(2021)               
+    torch.cuda.manual_seed_all(2021)           
     try:
         # Create checkpoint directory if it does not exist
         os.makedirs(args.checkpoint)
@@ -229,6 +230,9 @@ def training_function(config):
         model_pos_train.load_state_dict(checkpoint['model_pos'], strict=False)
         model_pos.load_state_dict(checkpoint['model_pos'], strict=False)
 
+    checkpoint = torch.load("/home/ubuntu/PoseFormerPlus/base_2021.pth", map_location=lambda storage, loc: storage)
+    model_pos_train.load_state_dict(checkpoint)
+    model_pos.load_state_dict(checkpoint)
 
     test_generator = UnchunkedGenerator(cameras_valid, poses_valid, poses_valid_2d,
                                         pad=pad, causal_shift=causal_shift, augment=False,
@@ -253,7 +257,7 @@ def training_function(config):
         lr = args.learning_rate
         optimizer = optim.AdamW(model_pos_train.parameters(), lr=lr, weight_decay=0.1)
         # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=args.lr_decay)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=2, cooldown=1, verbose=True, min_lr=1e-8, factor=args.lr_decay)
+        # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=2, cooldown=1, verbose=True, min_lr=1e-8, factor=args.lr_decay)
 
         lr_decay = args.lr_decay
         losses_3d_train = []
@@ -289,20 +293,15 @@ def training_function(config):
         print('** The final evaluation will be carried out after the last training epoch.')
 
         # Load hyper parameter from config
-        use_smooth_L1 = False #config["smooth_l1"] > 0.5 # Using smooth L1 for MPJPE or not
-        lambda1 = config["lambda1"] # mpjpe
-        lambda2 = 0 #config["lambda2"] # bone length
-        lambda3 = config["lambda3"] # angle orientation (limb)
-        lambda4 = config["lambda4"] # angle orientation (torso)
-        lambda5 = config["lambda5"] # joint angles of limbs
-        lambda6 = config["lambda6"] # advanced angle constraints
+        topk1 = config["topk1"] # topk for mpjpe
+        topk2 = config["topk2"] # topk for angle orientation
+        lambda1 = config["lambda1"] # weight for total loss
+        lambda2 = config["lambda2"] # weight for total loss
 
         lambda1 = round(lambda1/0.1)/10
         lambda2 = round(lambda2/0.1)/10 
-        lambda3 = round(lambda3/0.1)/10
-        lambda4 = round(lambda4/0.1)/10
-        lambda5 = round(lambda5/0.1)/10
-        lambda6 = round(lambda6/0.1)/10
+        topk1 = round(topk1/0.1)/10
+        topk2 = round(topk2/0.1)/10
 
         # Pos model only
         while epoch < args.epochs:
@@ -317,6 +316,8 @@ def training_function(config):
             batch_idx = 0
             debug_time = time()
             for cameras_train, batch_3d, batch_2d in train_generator.next_epoch():
+                # print(batch_3d.sum())
+                # import pdb; pdb.set_trace()
                 cameras_train = torch.from_numpy(cameras_train.astype('float32'))
                 inputs_3d = torch.from_numpy(batch_3d.astype('float32'))
                 inputs_2d = torch.from_numpy(batch_2d.astype('float32'))
@@ -337,24 +338,19 @@ def training_function(config):
                 predicted_3d_pos = model_pos_train(inputs_2d)
 
                 # torch.cuda.empty_cache()
-                loss_3d_pos = smooth_mpjpe(predicted_3d_pos, inputs_3d) if use_smooth_L1 else mpjpe(predicted_3d_pos, inputs_3d)
-                loss_bone_len = bone_len_constraint(predicted_3d_pos)
-                loss_ang_orient_limb, loss_ang_orient_torso = angle_orientation_constraint(predicted_3d_pos)
-                loss_limb_ang = limb_joint_angle(predicted_3d_pos, inputs_3d)
-                loss_ang_constraint = advanced_angle_constraint(predicted_3d_pos, inputs_3d)
+                loss_3d_pos = mpjpe(predicted_3d_pos, inputs_3d, top_k=topk1)
+                loss_ang_orient_limb, loss_ang_orient_torso = angle_orientation_constraint(predicted_3d_pos, top_k=topk2)
 
                 # loss_3d_pos = torch.tensor(0).to(predicted_3d_pos.device)
                 epoch_loss_3d_train += inputs_3d.shape[0] * inputs_3d.shape[1] * loss_3d_pos.item()
                 epoch_loss_angle_train += inputs_3d.shape[0] * inputs_3d.shape[1] * 0
                 N += inputs_3d.shape[0] * inputs_3d.shape[1]
 
-                loss_total = lambda1 * loss_3d_pos + lambda2 * loss_bone_len \
-                            + lambda3 * loss_ang_orient_limb + lambda4 * loss_ang_orient_torso \
-                            + lambda5 * loss_limb_ang + lambda6 * loss_ang_constraint
+                loss_total = lambda1 * loss_3d_pos + lambda2 * (loss_ang_orient_limb + loss_ang_orient_torso)
 
                 if batch_idx % 100 == 0:
-                    print("Training: Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - bone loss: {:.4f} - ang orient loss: {:.4f} - limb ang loss: {:.4f} - ang const. loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f}".format(
-                        epoch + 1, batch_idx + 1, train_generator.num_batches, loss_3d_pos.item(), lambda3 * loss_bone_len.item(), loss_ang_orient_limb.item() + lambda4 * loss_ang_orient_torso.item(), loss_limb_ang.item(), loss_ang_constraint.item(), loss_total.item(), epoch_loss_3d_train / N))
+                    print("Training: LR - {} - Epoch {} - Batch {}/{} - mpjpe loss: {:.4f} - ang orient loss: {:.4f} - total: {:.4f} - avg. mpjpe: {:.4f}".format(
+                        lr, epoch + 1, batch_idx + 1, train_generator.num_batches, loss_3d_pos.item(), loss_ang_orient_limb.item() + loss_ang_orient_torso.item(), loss_total.item(), epoch_loss_3d_train / N))
 
                 
                 loss_total.backward()
@@ -504,8 +500,17 @@ def training_function(config):
             lr = optimizer.param_groups[0]['lr']
             # scheduler.step(losses_3d_valid[-1])
             epoch += 1
+            torch.save({
+                'epoch': epoch,
+                'lr': lr,
+                'random_state': train_generator.random_state(),
+                'optimizer': optimizer.state_dict(),
+                'model_pos': model_pos_train.state_dict(),
+                # 'model_traj': model_traj_train.state_dict() if semi_supervised else None,
+                # 'random_state_semi': semi_generator.random_state() if semi_supervised else None,
+            }, "/home/ubuntu/PoseFormerPlus/checkpoint/tuning/end_{}_{}_{}_{}.pth".format(topk1, topk2, lambda1, lambda2))
             tune.report(mean_loss=losses_3d_valid[-1])
-
+            
 
 if __name__ == "__main__":
     def stopper(trial_id, result):
@@ -531,20 +536,16 @@ if __name__ == "__main__":
     #         "smooth_l1": tune.uniform(0, 1.0)
     #     }
     config={
-            "lambda1": tune.uniform(0.5, 1.0),
-            "lambda2": tune.uniform(0, 1.0),
-            "lambda3": tune.uniform(0, 1.0),
-            "lambda4": tune.uniform(0, 1.0),
-            "lambda5": tune.uniform(0, 1.0),
-            "lambda6": tune.uniform(0, 1.0)
+            "topk1": tune.uniform(0.2, 1.0),
+            "topk2": tune.uniform(0.2, 1.0),
+            "lambda1": tune.uniform(0.2, 1.0),
+            "lambda2": tune.uniform(0.2, 1.0),
         }
     current_best_params = [{
+        "topk1": 1.0,
+        "topk2": 1.0,
         "lambda1": 1.0,
-        "lambda2": 0,
-        "lambda3": 0,
-        "lambda4": 0,
-        "lambda5": 0,
-        "lambda6": 0
+        "lambda2": 0.0,
     }]
     # search_algo = HyperOptSearch(
     #     metric="mean_loss", mode="min",
@@ -556,12 +557,12 @@ if __name__ == "__main__":
     analysis = tune.run(
         training_function,
         metric="mean_loss",
-        name="tuning_losses_bayesian_1207",
+        name="tuning_losses_bayesian_ohem_mpjpe_ohem_angle",
         mode='min',
-        verbose=1,
+        verbose=0,
         search_alg=search_algo,
         resources_per_trial={'gpu': 1, 'cpu': 20},
-        config=config, num_samples=100, stop=stopper)
+        config=config, num_samples=50, stop=stopper)
 
     print("Best config: ", analysis.get_best_config(
         metric="mean_loss", mode="min"))

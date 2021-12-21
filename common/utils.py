@@ -44,6 +44,7 @@ def wrap(func, *args, unsqueeze=False):
 def deterministic_random(min_value, max_value, data):
     digest = hashlib.sha256(data.encode()).digest()
     raw_value = int.from_bytes(digest[:4], byteorder='little', signed=False)
+    print("RANDOM", raw_value)
     return int(raw_value / (2**32 - 1) * (max_value - min_value)) + min_value
 
 def load_pretrained_weights(model, checkpoint):
