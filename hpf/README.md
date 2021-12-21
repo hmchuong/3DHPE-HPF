@@ -28,24 +28,21 @@ Put the all downloaded datasets in ../datasets directory.
 ```
 
  ### Train
-The arguments for running the code are defined in [parser.py](utils/parser.py). We have used the following commands for training the network,on different datasets and body pose representations(3D and euler angles):
+The arguments for running the code are defined in [parser.py](utils/parser.py). The following is the command for training the network,on different datasets and 3D body pose representations:
  
 ```bash
  python main_h36_3d.py --input_n 10 --output_n 25 --skip_rate 1 --joints_to_consider 22 
  ```
-```bash
- python main_h36_ang.py --input_n 10 --output_n 25 --skip_rate 1 --joints_to_consider 16 
-  ```
- 
+
  ### Test
- To test on the pretrained model, we have used the following commands:
+ To test on the pretrained model, the following command is used:
  ```bash
  python main_h36_3d.py --input_n 10 --output_n 25 --skip_rate 1 --joints_to_consider 22 --mode test --model_path ./checkpoints/CKPT_3D_H36M
   ```
 
 
 ### Visualization
- For visualizing from a pretrained model, we have used the following commands:
+The command for visualizing the trained model is as below:
  ```bash
   python main_h36_3d.py --input_n 10 --output_n 25 --skip_rate 1 --joints_to_consider 22 --mode viz --model_path ./checkpoints/CKPT_3D_H36M --n_viz 5
  ```
