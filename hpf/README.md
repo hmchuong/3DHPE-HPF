@@ -2,6 +2,8 @@
 <h1>Domain adversarial STS-GCN</h1>
 </div>
 
+The code has been built on top of [STS-GCN](https://github.com/FraLuca/STSGCN)
+
  ### Install dependencies:
 ```
  $ pip install -r requirements.txt
